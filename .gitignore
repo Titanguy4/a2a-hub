@@ -5,3 +5,4 @@ target/
 *.log
 dist/
 *.jar
+PLAN_DE_DESARROLLO.md
