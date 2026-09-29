@@ -1,0 +1,118 @@
+package dev.a2ahub.api;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.a2ahub.agent.Agent;
+import dev.a2ahub.agent.AgentCard;
+import dev.a2ahub.agent.AgentRegistryService;
+import dev.a2ahub.agent.RegisterAgentRequest;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@WebMvcTest(AgentController.class)
+@DisplayName("AgentController Web Slice Tests")
+class AgentControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @MockitoBean
+    private AgentRegistryService agentRegistryService;
+
+    @Test
+    @DisplayName("POST /api/v1/agents - Should register new agent successfully")
+    void shouldRegisterAgent() throws Exception {
+        RegisterAgentRequest request = new RegisterAgentRequest("https://agent.test.io");
+        Agent agent = new Agent();
+        agent.setId(UUID.randomUUID());
+        agent.setName("Test Agent");
+        agent.setUrl("https://agent.test.io");
+        agent.setStatus("HEALTHY");
+
+        when(agentRegistryService.register("https://agent.test.io")).thenReturn(agent);
+
+        mockMvc.perform(post("/api/v1/agents")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("Test Agent"))
+                .andExpect(jsonPath("$.url").value("https://agent.test.io"))
+                .andExpect(jsonPath("$.status").value("HEALTHY"));
+
+        verify(agentRegistryService).register("https://agent.test.io");
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/agents - Should reject invalid URLs (Validation Gate)")
+    void shouldRejectInvalidUrlFormat() throws Exception {
+        RegisterAgentRequest request = new RegisterAgentRequest("invalid-not-a-url");
+
+        mockMvc.perform(post("/api/v1/agents")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("Validation Failed"))
+                .andExpect(jsonPath("$.details.url").exists());
+
+        verify(agentRegistryService, never()).register(any());
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/agents - Should return list of registered agents")
+    void shouldReturnAllAgents() throws Exception {
+        Agent agent = new Agent();
+        agent.setId(UUID.randomUUID());
+        agent.setName("Alpha Agent");
+        agent.setUrl("https://alpha.test.io");
+
+        when(agentRegistryService.findAll()).thenReturn(List.of(agent));
+
+        mockMvc.perform(get("/api/v1/agents"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].name").value("Alpha Agent"))
+                .andExpect(jsonPath("$[0].url").value("https://alpha.test.io"));
+
+        verify(agentRegistryService).findAll();
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/agents/{id} - Should return 400 when agent not found")
+    void shouldReturn400WhenAgentNotFound() throws Exception {
+        UUID nonExistentId = UUID.randomUUID();
+        when(agentRegistryService.findById(nonExistentId))
+                .thenThrow(new IllegalArgumentException("Agent not found with ID: " + nonExistentId));
+
+        mockMvc.perform(get("/api/v1/agents/{id}", nonExistentId))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("Bad Request"))
+                .andExpect(jsonPath("$.message").value("Agent not found with ID: " + nonExistentId));
+    }
+
+    @Test
+    @DisplayName("DELETE /api/v1/agents/{id} - Should return 204 No Content")
+    void shouldUnregisterAgent() throws Exception {
+        UUID id = UUID.randomUUID();
+        doNothing().when(agentRegistryService).unregister(id);
+
+        mockMvc.perform(delete("/api/v1/agents/{id}", id))
+                .andExpect(status().isNoContent());
+
+        verify(agentRegistryService).unregister(id);
+    }
+}

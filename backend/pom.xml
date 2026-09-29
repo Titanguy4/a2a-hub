@@ -52,12 +52,14 @@
             <artifactId>pgvector</artifactId>
             <version>0.1.6</version>
         </dependency>
-        <!-- A2A Java SDK: Beta mock assuming future availability -->
+        <!-- A2A Java SDK: Will be linked when 1.0.0 is released on Maven Central. Using native domain mapping in the interim. -->
+        <!--
         <dependency>
             <groupId>org.a2aproject.sdk</groupId>
             <artifactId>a2a-java-sdk-client</artifactId>
             <version>1.0.0.Beta1</version>
         </dependency>
+        -->
         <!-- LangChain4j for AI Discovery -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
