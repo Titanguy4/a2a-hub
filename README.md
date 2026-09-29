@@ -1,87 +1,140 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/oscarbol09/a2a-hub/main/frontend/public/favicon.svg" alt="A2A-Hub Logo" width="120">
+  <img src="https://raw.githubusercontent.com/oscarbol09/a2a-hub/main/frontend/public/favicon.svg" alt="A2A-Hub Logo" width="96">
 </p>
 
 <h1 align="center">A2A-Hub</h1>
 
 <p align="center">
-  <em>Hub de descubrimiento y orquestación de agentes AI basado en el protocolo abierto Agent2Agent (A2A).</em>
+  <strong>Decentralized Agent Discovery Registry & Orchestration Hub for the Agent2Agent (A2A) Protocol</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/oscarbol09/a2a-hub/actions"><img src="https://img.shields.io/badge/CI-Passing-brightgreen.svg" alt="CI Status"></a>
-  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
+  <a href="https://github.com/oscarbol09/a2a-hub/actions/workflows/ci.yml"><img src="https://github.com/oscarbol09/a2a-hub/actions/workflows/ci.yml/badge.svg" alt="CI Pipeline"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
   <a href="https://spring.io/projects/spring-boot"><img src="https://img.shields.io/badge/Spring_Boot-3.4-6DB33F.svg" alt="Spring Boot 3.4"></a>
   <a href="https://www.oracle.com/java/technologies/downloads/#java21"><img src="https://img.shields.io/badge/Java-21_LTS-007396.svg" alt="Java 21 LTS"></a>
-  <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Vue-3-4FC08D.svg" alt="Vue 3"></a>
-  <a href="https://github.com/a2aproject/A2A"><img src="https://img.shields.io/badge/Protocol-A2A_v1.0-orange.svg" alt="A2A Protocol"></a>
+  <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Vue-3.5-4FC08D.svg" alt="Vue 3.5"></a>
+  <a href="https://github.com/a2aproject/A2A"><img src="https://img.shields.io/badge/Protocol-A2A_v1.0-orange.svg" alt="A2A Protocol v1.0"></a>
 </p>
 
 ---
 
-## 🚀 Motivación
+## Why This Exists
 
-El protocolo **A2A (Agent2Agent)**, mantenido por la Linux Foundation y originalmente contribuido por Google, define cómo agentes de Inteligencia Artificial independientes pueden descubrirse, comunicarse y delegar tareas entre sí utilizando interfaces estandarizadas.
+The [Agent2Agent (A2A) Protocol](https://github.com/a2aproject/A2A) standardizes how autonomous AI agents describe their capabilities and negotiate tasks. While client libraries handle peer-to-peer communication, multi-agent systems in enterprise environments require a central registry to:
 
-Aunque existen SDKs oficiales para interactuar punto a punto, **el ecosistema carecía de una capa de registro centralizada con interfaz gráfica** (identificado en el [Issue #683](https://github.com/a2aproject/a2a-java/issues/683)). **A2A-Hub** resuelve esto proporcionando un Registry y Discovery Hub *Open Source* construido en Java empresarial. Permite registrar agentes A2A, descubrirlos semánticamente por sus capacidades mediante LangChain4j y PostgreSQL (`pgvector`), monitorearlos en tiempo real y orquestar flujos multi-agente desde una interfaz intuitiva en Vue 3.
+1. **Resolve agent capabilities dynamically** instead of hardcoding service endpoints.
+2. **Monitor availability and health** without coupling client agents to polling logic.
+3. **Provide semantic discovery** so tasks phrased in plain language match the most suitable agent.
 
-## ✨ Características Principales
+This project addresses the gap discussed in [a2aproject/a2a-java#683](https://github.com/a2aproject/a2a-java/issues/683) by providing an open-source, production-ready registry and web dashboard built on Java 21 and Spring Boot 3.4.
 
-- **Registro Estandarizado:** Consume y parsea el archivo `/.well-known/agent-card.json` de los agentes para su registro automático en el hub.
-- **Discovery Inteligente (RAG):** Búsqueda de capacidades exactas y búsqueda semántica en lenguaje natural motorizada por `pgvector` y Gemini (Vía LangChain4j).
-- **Monitoreo Resiliente:** Health checks asíncronos y no bloqueantes usando **Java 21 Virtual Threads** y actualizaciones a la interfaz gráfica en tiempo real mediante WebSockets.
-- **Task Proxy con Streaming:** Interfaz para delegar tareas a agentes y visualizar su proceso de pensamiento (Server-Sent Events) directo en el dashboard.
-- **Seguridad por Diseño:** Prevención de SSRF, límites de rate y soporte para autenticación entre agentes.
+## System Architecture
 
-## 🏗️ Arquitectura y Tecnologías
+```
+┌──────────────────────────────────────────────────────────────┐
+│                         A2A-Hub                              │
+│                                                              │
+│  ┌─────────────┐   ┌──────────────┐   ┌──────────────────┐  │
+│  │  Vue 3 UI   │◄──│  WebSocket   │   │  REST API        │  │
+│  │  (Vite)     │   │  /ws/agents  │   │  /api/v1/agents  │  │
+│  └──────┬──────┘   └──────┬───────┘   └────────┬─────────┘  │
+│         │                 │                    │             │
+│  ┌──────▼─────────────────▼────────────────────▼──────────┐  │
+│  │       Spring Boot 3.4 Runtime (Virtual Threads)         │  │
+│  │  • AgentRegistryService    • AgentHealthMonitor        │  │
+│  │  • AgentDiscoveryService   • TaskProxyService          │  │
+│  └──────────────────────────┬──────────────────────────────┘  │
+│                             │                                │
+│  ┌──────────────────────────▼──────────────────────────────┐  │
+│  │         PostgreSQL 16 + pgvector (HNSW Indexing)        │  │
+│  └─────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
+         │ HTTP / JSON-RPC / REST
+         ▼
+┌────────────────┐  ┌────────────────┐  ┌────────────────┐
+│  Agent A       │  │  Agent B       │  │  Agent N       │
+│  /.well-known/ │  │  /.well-known/ │  │  /.well-known/ │
+│  agent-card... │  │  agent-card... │  │  agent-card... │
+└────────────────┘  └────────────────┘  └────────────────┘
+```
 
-El proyecto se estructura en un monorepo que contiene tanto el Backend como el Frontend:
+## Quickstart
 
-- **Backend:** Java 21, Spring Boot 3.4, `RestClient` (con Virtual Threads), Spring Data JPA, PostgreSQL + `pgvector`, Flyway, WebSocket (STOMP), LangChain4j, A2A Java SDK.
-- **Frontend:** Vue 3 (Composition API), TypeScript, Vite, Tailwind CSS v4, Pinia (Manejo de estado reactivo), Lucide Icons.
-- **Infraestructura:** Docker & Docker Compose para un arranque rápido y sin fricciones.
+### Prerequisites
+- Docker & Docker Compose
+- Java 21 JDK (optional, if running outside Docker)
+- Node.js 20+ (optional, for frontend dev server)
 
-## 📦 Quickstart (Comenzar localmente)
+### 1. Clone & Start Infrastructure
+```bash
+git clone https://github.com/oscarbol09/a2a-hub.git
+cd a2a-hub
 
-Para levantar el Hub completo en tu máquina, solo necesitas Docker y Java 21 instalados.
+# Start PostgreSQL with pgvector extension
+docker-compose up -d postgres
+```
 
-1. **Clonar el repositorio:**
-   ```bash
-   git clone https://github.com/oscarbol09/a2a-hub.git
-   cd a2a-hub
-   ```
+### 2. Run the Backend
+```bash
+cd backend
+./mvnw spring-boot:run
+```
+The API starts on `http://localhost:8080`. Flyway runs migrations automatically on boot.
 
-2. **Levantar PostgreSQL con pgvector:**
-   ```bash
-   docker-compose up -d postgres
-   ```
+### 3. Run the Web Dashboard
+```bash
+cd ../frontend
+npm install
+npm run dev
+```
+Open `http://localhost:5173` to access the registry UI.
 
-3. **Ejecutar el Backend:**
-   ```bash
-   cd backend
-   ./mvnw spring-boot:run
-   ```
+## API Usage
 
-4. **Ejecutar el Frontend:**
-   ```bash
-   cd ../frontend
-   npm install
-   npm run dev
-   ```
-   > 🌐 Accede al dashboard en `http://localhost:5173`
+### Register an Agent
+Fetch and index an agent's `agent-card.json`:
 
-## 🤝 Cómo Contribuir
+```bash
+curl -X POST http://localhost:8080/api/v1/agents \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://weather-agent.internal.net"}'
+```
 
-¡A2A-Hub es un proyecto Open Source y toda ayuda es bienvenida!
-Desde corrección de bugs, traducciones, hasta nuevos componentes o ideas de diseño.
+Response (`201 Created`):
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "WeatherAgent",
+  "description": "Provides real-time meteorological data and forecasts.",
+  "url": "https://weather-agent.internal.net",
+  "version": "1.0.0",
+  "status": "HEALTHY",
+  "authType": "NONE",
+  "registeredAt": "2026-09-28T20:00:00Z"
+}
+```
 
-1. Por favor, lee nuestra [Guía de Contribución (CONTRIBUTING.md)](CONTRIBUTING.md) para conocer nuestro flujo de trabajo (Git Flow, Conventional Commits).
-2. Asegúrate de revisar nuestro [Código de Conducta](CODE_OF_CONDUCT.md).
-3. Revisa los [Issues Abiertos](https://github.com/oscarbol09/a2a-hub/issues) o únete a las discusiones para proponer tu idea antes de codificar.
+### List Registered Agents
+```bash
+curl -s http://localhost:8080/api/v1/agents | jq .
+```
 
-## 📄 Licencia
+## Engineering Decisions & Trade-offs
 
-Este proyecto está licenciado bajo la **Apache License 2.0**. Puedes usarlo, modificarlo y distribuirlo libremente tanto en entornos comerciales como personales. Ver el archivo [LICENSE](LICENSE) para más detalles.
+- **Virtual Threads over Reactive Streams:** We use Java 21 Virtual Threads (`spring.threads.virtual.enabled=true`) alongside synchronous `RestClient`. This avoids the debugging complexity and reactive virus of Project Reactor while sustaining thousands of concurrent outbound agent health probes.
+- **PostgreSQL JSONB + pgvector:** Rather than running separate relational and vector databases, we store raw `AgentCard` payloads in PostgreSQL `JSONB` columns and index skill embeddings using `pgvector` with HNSW cosine distance operators.
+- **SSRF Hardening:** The registry resolves and inspects agent hostnames to reject loopback addresses, private IP ranges (RFC 1918), and cloud metadata services (`169.254.169.254`) in production configurations.
 
----
-*Construido con ❤️ para impulsar el futuro de la orquestación multi-agente.*
+## Known Limitations
+
+- **Authentication:** Token rotation for private downstream agents is currently static (`Bearer` or `API_KEY`). Mutual TLS (mTLS) handshake support is tracked for milestone v0.4.
+- **Event Streaming:** Task proxying currently buffers intermediate steps; full Server-Sent Events (SSE) streaming for long-running reasoning agents is implemented in Phase 4.
+
+## Contributing
+
+Pull requests are welcome. Please check [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming conventions, commit formats, and test requirements before opening a PR.
+
+## License
+
+[Apache License 2.0](LICENSE). Free for personal and commercial use.

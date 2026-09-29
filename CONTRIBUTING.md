@@ -1,50 +1,52 @@
 # Contributing to A2A-Hub
 
-First off, thank you for considering contributing to A2A-Hub! It's people like you that make open-source such a great community. 
+Guidelines for reporting bugs, submitting features, and opening pull requests.
 
-## 1. Where do I go from here?
+## Workflow
 
-If you've noticed a bug or have a feature request, make sure to check our [Issues](https://github.com/oscarbol09/a2a-hub/issues) to see if someone else has already created a ticket. If not, go ahead and [make one](https://github.com/oscarbol09/a2a-hub/issues/new)!
+1. Check [open issues](https://github.com/oscarbol09/a2a-hub/issues) before opening a new ticket.
+2. Fork the repository and create a feature branch off `main`:
+   ```bash
+   git checkout -b feat/discovery-filter
+   ```
+3. Ensure local tests pass before opening a Pull Request:
+   ```bash
+   # Backend
+   cd backend && mvn test
 
-## 2. Fork & create a branch
+   # Frontend
+   cd frontend && npm run build
+   ```
 
-If this is something you think you can fix, then [fork A2A-Hub](https://github.com/oscarbol09/a2a-hub/fork) and create a branch with a descriptive name.
+## Engineering Standards
 
-A good branch name would be (where issue #325 is the ticket you're working on):
+### Backend (Java 21 · Spring Boot 3.4)
+- **Virtual Threads Hygiene:** Do not hold `synchronized` monitors across I/O or network calls. Use `ReentrantLock` when synchronization is mandatory to avoid Loom carrier thread pinning.
+- **Data Access:** Validate entity boundaries; store dynamic A2A spec payloads in PostgreSQL `JSONB` with `@JdbcTypeCode(SqlTypes.JSON)`.
+- **Testing:** Unit tests must use JUnit 5 and AssertJ. Controller tests must use `@WebMvcTest` with MockMvc. Do not commit tautological tests or empty assertion mocks.
 
-```sh
-git checkout -b fix/325-agent-health-check
+### Frontend (Vue 3.5 · TypeScript · Tailwind CSS)
+- **Composition API:** Use `<script setup lang="ts">`.
+- **Strict Typing:** Define explicit interfaces for all API response payloads and component props in `src/services/api.ts`.
+- **Styling:** Use semantic Tailwind classes. Keep component layout modular.
+
+## Commit Message Format
+
+We follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>(<scope>): <short summary>
+
+[optional body explaining WHY the change was made]
 ```
 
-## 3. Implement your fix or feature
+**Allowed types:** `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `chore`.
 
-### Backend Guidelines (Java/Spring Boot)
-- **Style:** We follow standard Java conventions. Avoid overly nested blocks.
-- **Testing:** Add JUnit 5 tests for your logic. Integration tests should use Testcontainers.
-- **Virtual Threads:** Be mindful of thread pinning. Avoid `synchronized` blocks around long network/I/O calls; use `ReentrantLock` if necessary.
+Examples:
+- `feat(registry): add SSRF validation to agent registration endpoint`
+- `test(discovery): add unit test matrix for cosine similarity ranking`
+- `fix(ws): reconnect WebSocket channel on connection drop`
 
-### Frontend Guidelines (Vue 3/Tailwind)
-- **Composition API:** Use `<script setup lang="ts">`.
-- **Types:** Always provide types or interfaces for API responses and component props. No `any` without justification.
-- **Styling:** Use Tailwind utility classes. For complex components, abstract into reusable components in `src/components`.
+## Code of Conduct
 
-## 4. Conventional Commits
-
-We use [Conventional Commits](https://www.conventionalcommits.org/). This means your commit messages should be formatted like:
-
-- `feat(frontend): add search capability to discovery view`
-- `fix(backend): resolve SSRF vulnerability in agent registry`
-- `docs: update setup instructions in README`
-- `chore: update dependencies`
-
-## 5. Make a Pull Request
-
-At this point, you should switch back to your master branch and make sure it's up to date with A2A-Hub's master branch.
-
-Then push your branch to your fork and submit a pull request!
-
-Please fill out the PR template completely. A maintainer will review your code, potentially ask for changes, and merge it!
-
-## 6. Code of Conduct
-
-Please note that this project is released with a [Contributor Code of Conduct](CODE_OF_CONDUCT.md). By participating in this project you agree to abide by its terms.
+All contributors are expected to adhere to the [Contributor Covenant](CODE_OF_CONDUCT.md).
