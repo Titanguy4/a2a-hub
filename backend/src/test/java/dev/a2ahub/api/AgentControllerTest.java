@@ -2,19 +2,20 @@ package dev.a2ahub.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.a2ahub.agent.Agent;
-import dev.a2ahub.agent.AgentCard;
 import dev.a2ahub.agent.AgentRegistryService;
 import dev.a2ahub.agent.RegisterAgentRequest;
+import dev.a2ahub.security.ApiKeyAuthFilter;
+import dev.a2ahub.security.SecurityProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -23,6 +24,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(AgentController.class)
+@Import({SecurityProperties.class, ApiKeyAuthFilter.class})
 @DisplayName("AgentController Web Slice Tests")
 class AgentControllerTest {
 
