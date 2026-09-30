@@ -7,6 +7,12 @@ RUN mvn package -DskipTests
 
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
-COPY --from=build /app/target/*.jar app.jar
+
+# Create a non-privileged user and group for runtime security
+RUN addgroup -S a2agroup && adduser -S a2a -G a2agroup
+
+COPY --from=build --chown=a2a:a2agroup /app/target/*.jar app.jar
+
+USER a2a:a2agroup
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
