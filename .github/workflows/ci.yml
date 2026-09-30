@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   # --------------------------------------------------------------------------
-  # Gate 1: Security Audit & Secret Detection
+  # Gate 1: Security Audit, Secret Detection & SAST
   # --------------------------------------------------------------------------
   security-audit:
     name: Security & Secret Scan
@@ -29,12 +29,20 @@ jobs:
           fetch-depth: 0
 
       - name: Scan for Secret Leaks
-        uses: gitleaks/gitleaks-action@v2.3.8
+        uses: gitleaks/gitleaks-action@e811c7fa159752b1ecfa1957262c5b966cfce1d2 # v2.3.8
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Static Application Security Testing (SAST)
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/owasp-top-ten
+            p/secrets
+
   # --------------------------------------------------------------------------
-  # Gate 2: Backend Build, Static Analysis & Automated Testing (Java 21)
+  # Gate 2: Backend Unit, Slice & Testcontainers Integration Tests (Java 21)
   # --------------------------------------------------------------------------
   backend-test:
     name: Backend Test (Java 21 · Spring Boot 3.4)
@@ -45,21 +53,21 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Temurin JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@8df1039479bd10d9ed6430fa91d7498c2b1086b5 # v4.5.0
         with:
           java-version: '21'
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Compile and Run Unit & Slice Tests
+      - name: Compile and Run Unit, Slice & Architecture Tests
         working-directory: ./backend
         run: mvn clean test -B
 
   # --------------------------------------------------------------------------
-  # Gate 3: Frontend Typecheck, Lint & Production Build (Vue 3 + Vite)
+  # Gate 3: Frontend Unit Tests, Typecheck & Production Build (Vue 3 + Vite)
   # --------------------------------------------------------------------------
   frontend-test:
-    name: Frontend Build & Typecheck (Vue 3 · TypeScript)
+    name: Frontend Test & Build (Vue 3 · Vitest · TypeScript)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -67,7 +75,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4.0.3
         with:
           node-version: '20'
           cache: 'npm'
@@ -77,6 +85,50 @@ jobs:
         working-directory: ./frontend
         run: npm ci
 
+      - name: Run Frontend Vitest Test Suite
+        working-directory: ./frontend
+        run: npm test
+
       - name: Typecheck and Build Bundle
         working-directory: ./frontend
         run: npm run build
+
+  # --------------------------------------------------------------------------
+  # Gate 4: Container Build & Vulnerability Scan (Trivy)
+  # --------------------------------------------------------------------------
+  docker-scan:
+    name: Docker Build & Vulnerability Scan
+    needs: [backend-test, frontend-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image with GHA Caching
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          load: true
+          tags: a2a-hub-backend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Container Vulnerability Scan with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: a2a-hub-backend:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Security SARIF to GitHub Security Tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
