@@ -1,5 +1,6 @@
 package dev.a2ahub.agent;
 
+import dev.a2ahub.security.SsrfValidator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -16,13 +17,16 @@ public class AgentRegistryService {
     private static final Logger log = LoggerFactory.getLogger(AgentRegistryService.class);
     private final AgentRepository agentRepository;
     private final AgentSkillRepository agentSkillRepository;
+    private final SsrfValidator ssrfValidator;
     private final RestClient restClient;
 
     public AgentRegistryService(AgentRepository agentRepository,
                                 AgentSkillRepository agentSkillRepository,
+                                SsrfValidator ssrfValidator,
                                 RestClient.Builder restClientBuilder) {
         this.agentRepository = agentRepository;
         this.agentSkillRepository = agentSkillRepository;
+        this.ssrfValidator = ssrfValidator;
         this.restClient = restClientBuilder.build();
     }
 
@@ -31,6 +35,9 @@ public class AgentRegistryService {
         if (agentRepository.existsByUrl(agentUrl)) {
             throw new IllegalArgumentException("Agent with URL " + agentUrl + " is already registered.");
         }
+
+        // Validate SSRF defenses before issuing outbound HTTP requests
+        ssrfValidator.validateSafeRemoteUrl(agentUrl);
 
         String fetchUrl = agentUrl.endsWith("/") 
             ? agentUrl + ".well-known/agent-card.json" 

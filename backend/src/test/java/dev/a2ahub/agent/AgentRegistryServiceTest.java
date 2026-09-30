@@ -1,5 +1,6 @@
 package dev.a2ahub.agent;
 
+import dev.a2ahub.security.SsrfValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -30,6 +31,9 @@ class AgentRegistryServiceTest {
     private AgentSkillRepository agentSkillRepository;
 
     @Mock
+    private SsrfValidator ssrfValidator;
+
+    @Mock
     private RestClient.Builder restClientBuilder;
 
     @Mock
@@ -46,7 +50,7 @@ class AgentRegistryServiceTest {
     @BeforeEach
     void setUp() {
         when(restClientBuilder.build()).thenReturn(restClient);
-        agentRegistryService = new AgentRegistryService(agentRepository, agentSkillRepository, restClientBuilder);
+        agentRegistryService = new AgentRegistryService(agentRepository, agentSkillRepository, ssrfValidator, restClientBuilder);
     }
 
     @Test
@@ -60,14 +64,16 @@ class AgentRegistryServiceTest {
                 .hasMessageContaining("already registered");
 
         verify(agentRepository, never()).save(any());
+        verify(ssrfValidator, never()).validateSafeRemoteUrl(any());
     }
 
     @Test
-    @DisplayName("Should successfully register agent and save normalized skills")
+    @DisplayName("Should validate SSRF before registering and save normalized skills")
     @SuppressWarnings("unchecked")
     void shouldRegisterAgentAndExtractSkills() {
         String url = "https://weather.example.com";
         when(agentRepository.existsByUrl(url)).thenReturn(false);
+        doNothing().when(ssrfValidator).validateSafeRemoteUrl(url);
 
         AgentCard.Skill skill = new AgentCard.Skill("get_weather", "Get Weather", "Fetches current weather", List.of("weather", "forecast"));
         AgentCard card = new AgentCard("Weather Agent", "Weather bot", url, "1.0.0", List.of(skill), Map.of(), List.of("JSON-RPC"));
@@ -88,6 +94,7 @@ class AgentRegistryServiceTest {
 
         assertThat(result).isNotNull();
         assertThat(result.getName()).isEqualTo("Weather Agent");
+        verify(ssrfValidator).validateSafeRemoteUrl(url);
         verify(agentRepository).save(any(Agent.class));
         verify(agentSkillRepository).saveAll(anyList());
     }
