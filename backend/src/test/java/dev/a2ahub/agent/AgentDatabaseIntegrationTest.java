@@ -67,7 +67,7 @@ class AgentDatabaseIntegrationTest {
         assertThat(savedAgent.getId()).isNotNull();
 
         AgentSkillEntity skillEntity = new AgentSkillEntity();
-        skillEntity.setAgentId(savedAgent.getId());
+        skillEntity.setAgent(savedAgent);
         skillEntity.setSkillId("get_weather");
         skillEntity.setName("Get Weather");
         skillEntity.setDescription("Fetches live weather");
