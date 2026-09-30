@@ -7,7 +7,6 @@ export const api = axios.create({
   }
 });
 
-// TypeScript interfaces based on Phase 1 models
 export interface AgentSkill {
   id: string;
   name: string;
@@ -38,3 +37,30 @@ export interface Agent {
   registeredAt: string;
   lastSeenAt: string | null;
 }
+
+export interface SkillSummary {
+  skillId: string;
+  name: string;
+  description: string;
+  tags: string[];
+  agentCount: number;
+  agentIds: string[];
+}
+
+export interface TagSummary {
+  tag: string;
+  count: number;
+}
+
+export interface DiscoverParams {
+  skill?: string;
+  tag?: string;
+  capability?: string;
+  q?: string;
+}
+
+export const discoveryApi = {
+  discover: (params: DiscoverParams) => api.get<Agent[]>('/discover', { params }),
+  getSkills: () => api.get<SkillSummary[]>('/skills'),
+  getTags: () => api.get<TagSummary[]>('/tags')
+};

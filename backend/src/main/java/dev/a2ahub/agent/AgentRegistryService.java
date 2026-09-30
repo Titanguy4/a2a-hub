@@ -15,10 +15,14 @@ public class AgentRegistryService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentRegistryService.class);
     private final AgentRepository agentRepository;
+    private final AgentSkillRepository agentSkillRepository;
     private final RestClient restClient;
 
-    public AgentRegistryService(AgentRepository agentRepository, RestClient.Builder restClientBuilder) {
+    public AgentRegistryService(AgentRepository agentRepository,
+                                AgentSkillRepository agentSkillRepository,
+                                RestClient.Builder restClientBuilder) {
         this.agentRepository = agentRepository;
+        this.agentSkillRepository = agentSkillRepository;
         this.restClient = restClientBuilder.build();
     }
 
@@ -28,8 +32,6 @@ public class AgentRegistryService {
             throw new IllegalArgumentException("Agent with URL " + agentUrl + " is already registered.");
         }
 
-        // TODO: Validate SSRF (prevent resolving to localhost/internal IPs in prod)
-        
         String fetchUrl = agentUrl.endsWith("/") 
             ? agentUrl + ".well-known/agent-card.json" 
             : agentUrl + "/.well-known/agent-card.json";
@@ -59,7 +61,23 @@ public class AgentRegistryService {
         agent.setAgentCard(card);
         agent.setStatus("HEALTHY");
 
-        return agentRepository.save(agent);
+        Agent savedAgent = agentRepository.save(agent);
+
+        // Sync individual skills into relational table for fast index querying
+        if (card.skills() != null && !card.skills().isEmpty()) {
+            List<AgentSkillEntity> skillEntities = card.skills().stream().map(s -> {
+                AgentSkillEntity entity = new AgentSkillEntity();
+                entity.setAgent(savedAgent);
+                entity.setSkillId(s.id() != null && !s.id().isBlank() ? s.id() : s.name().toLowerCase().replace(" ", "_"));
+                entity.setName(s.name() != null ? s.name() : "Unnamed Skill");
+                entity.setDescription(s.description());
+                entity.setTags(s.tags() != null ? s.tags() : List.of());
+                return entity;
+            }).toList();
+            agentSkillRepository.saveAll(skillEntities);
+        }
+
+        return savedAgent;
     }
 
     public List<Agent> findAll() {
@@ -73,6 +91,7 @@ public class AgentRegistryService {
 
     @Transactional
     public void unregister(UUID id) {
+        agentSkillRepository.deleteByAgentId(id);
         agentRepository.deleteById(id);
     }
 }

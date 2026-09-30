@@ -4,11 +4,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.client.RestClient;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -17,7 +17,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -26,6 +25,9 @@ class AgentRegistryServiceTest {
 
     @Mock
     private AgentRepository agentRepository;
+
+    @Mock
+    private AgentSkillRepository agentSkillRepository;
 
     @Mock
     private RestClient.Builder restClientBuilder;
@@ -44,7 +46,7 @@ class AgentRegistryServiceTest {
     @BeforeEach
     void setUp() {
         when(restClientBuilder.build()).thenReturn(restClient);
-        agentRegistryService = new AgentRegistryService(agentRepository, restClientBuilder);
+        agentRegistryService = new AgentRegistryService(agentRepository, agentSkillRepository, restClientBuilder);
     }
 
     @Test
@@ -58,6 +60,36 @@ class AgentRegistryServiceTest {
                 .hasMessageContaining("already registered");
 
         verify(agentRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Should successfully register agent and save normalized skills")
+    @SuppressWarnings("unchecked")
+    void shouldRegisterAgentAndExtractSkills() {
+        String url = "https://weather.example.com";
+        when(agentRepository.existsByUrl(url)).thenReturn(false);
+
+        AgentCard.Skill skill = new AgentCard.Skill("get_weather", "Get Weather", "Fetches current weather", List.of("weather", "forecast"));
+        AgentCard card = new AgentCard("Weather Agent", "Weather bot", url, "1.0.0", List.of(skill), Map.of(), List.of("JSON-RPC"));
+
+        when(restClient.get()).thenReturn(requestHeadersUriSpec);
+        when(requestHeadersUriSpec.uri(any(URI.class))).thenReturn(requestHeadersUriSpec);
+        when(requestHeadersUriSpec.retrieve()).thenReturn(responseSpec);
+        when(responseSpec.body(AgentCard.class)).thenReturn(card);
+
+        Agent savedAgent = new Agent();
+        savedAgent.setId(UUID.randomUUID());
+        savedAgent.setName(card.name());
+        savedAgent.setUrl(url);
+
+        when(agentRepository.save(any(Agent.class))).thenReturn(savedAgent);
+
+        Agent result = agentRegistryService.register(url);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getName()).isEqualTo("Weather Agent");
+        verify(agentRepository).save(any(Agent.class));
+        verify(agentSkillRepository).saveAll(anyList());
     }
 
     @Test
@@ -105,13 +137,15 @@ class AgentRegistryServiceTest {
     }
 
     @Test
-    @DisplayName("Should unregister agent by ID")
+    @DisplayName("Should unregister agent by ID and cleanup skills")
     void shouldUnregisterAgent() {
         UUID id = UUID.randomUUID();
+        doNothing().when(agentSkillRepository).deleteByAgentId(id);
         doNothing().when(agentRepository).deleteById(id);
 
         agentRegistryService.unregister(id);
 
+        verify(agentSkillRepository).deleteByAgentId(id);
         verify(agentRepository).deleteById(id);
     }
 }
