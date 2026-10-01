@@ -3,6 +3,12 @@ import { mount, flushPromises } from '@vue/test-utils';
 import DiscoverView from '../DiscoverView.vue';
 import { discoveryApi, type Agent, type SkillSummary, type TagSummary } from '../../services/api';
 
+vi.mock('vue-router', () => ({
+  useRouter: () => ({
+    push: vi.fn()
+  })
+}));
+
 const mockAgents: Agent[] = [
   {
     id: 'agent-1',

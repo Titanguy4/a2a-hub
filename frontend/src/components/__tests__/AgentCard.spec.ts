@@ -1,7 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mount } from '@vue/test-utils';
 import AgentCard from '../AgentCard.vue';
 import type { Agent } from '../../services/api';
+
+vi.mock('vue-router', () => ({
+  useRouter: () => ({
+    push: vi.fn()
+  })
+}));
 
 const mockAgent: Agent = {
   id: '550e8400-e29b-41d4-a716-446655440000',

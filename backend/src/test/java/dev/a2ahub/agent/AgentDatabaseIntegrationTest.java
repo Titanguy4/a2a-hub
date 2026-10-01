@@ -1,6 +1,6 @@
 package dev.a2ahub.agent;
 
-import dev.a2ahub.health.HealthCheckEntity;
+import dev.a2ahub.health.HealthCheckLog;
 import dev.a2ahub.health.HealthCheckRepository;
 import dev.a2ahub.security.AesGcmAttributeConverter;
 import dev.a2ahub.security.SecurityProperties;
@@ -134,15 +134,11 @@ class AgentDatabaseIntegrationTest {
         Agent savedAgent = agentRepository.save(agent);
 
         // Persist HealthCheck
-        HealthCheckEntity check = new HealthCheckEntity();
-        check.setAgent(savedAgent);
-        check.setStatus("HEALTHY");
-        check.setLatencyMs(45);
-        check.setCheckedAt(ZonedDateTime.now());
-        HealthCheckEntity savedCheck = healthCheckRepository.save(check);
+        HealthCheckLog check = new HealthCheckLog(savedAgent, "HEALTHY", 45, null);
+        HealthCheckLog savedCheck = healthCheckRepository.save(check);
         assertThat(savedCheck.getId()).isNotNull();
 
-        List<HealthCheckEntity> checks = healthCheckRepository.findTop10ByAgentIdOrderByCheckedAtDesc(savedAgent.getId());
+        List<HealthCheckLog> checks = healthCheckRepository.findRecentByAgentId(savedAgent.getId(), PageRequest.of(0, 10));
         assertThat(checks).hasSize(1);
         assertThat(checks.getFirst().getLatencyMs()).isEqualTo(45);
 

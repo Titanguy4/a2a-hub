@@ -1,4 +1,4 @@
-package dev.a2ahub.ws;
+package dev.a2ahub.events;
 
 import java.time.ZonedDateTime;
 import java.util.UUID;
