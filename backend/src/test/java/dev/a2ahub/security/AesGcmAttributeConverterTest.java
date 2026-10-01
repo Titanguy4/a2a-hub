@@ -48,4 +48,12 @@ class AesGcmAttributeConverterTest {
         String decrypted = converter.convertToEntityAttribute(plaintext);
         assertThat(decrypted).isEqualTo(plaintext);
     }
+
+    @Test
+    @DisplayName("Should reject encryption keys with fewer than 16 characters")
+    void shouldRejectShortKey() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> AesGcmAttributeConverter.initKey("too-short"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("at least 16 characters");
+    }
 }

@@ -23,13 +23,16 @@ public class AesGcmAttributeConverter implements AttributeConverter<String, Stri
     private static final int GCM_IV_LENGTH_BYTES = 12; // 96-bit IV recommended for GCM
     private static final int GCM_TAG_LENGTH_BITS = 128; // 128-bit authentication tag
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AesGcmAttributeConverter.class);
+    private static final String DEFAULT_DEV_KEY = "a2a-hub-default-master-encryption-key-32bytes!";
+
     private static volatile byte[] masterKeyBytes;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AesGcmAttributeConverter() {
         // Fallback default key if invoked by JPA before Spring context injection
         if (masterKeyBytes == null) {
-            initKey("a2a-hub-default-master-encryption-key-32bytes!");
+            initKey(DEFAULT_DEV_KEY);
         }
     }
 
@@ -38,13 +41,19 @@ public class AesGcmAttributeConverter implements AttributeConverter<String, Stri
         String key = properties.getEncryptionKey();
         if (key != null && !key.isBlank()) {
             initKey(key);
+            log.info("AES-GCM master encryption key configured from application environment");
+        } else {
+            log.warn("Running with default master encryption key. For production, set A2A_HUB_ENCRYPTION_KEY environment variable.");
         }
     }
 
     public static void initKey(String secret) {
+        if (secret == null || secret.trim().length() < 16) {
+            throw new IllegalArgumentException("Master encryption key must have at least 16 characters for cryptographic safety.");
+        }
         try {
             MessageDigest sha = MessageDigest.getInstance("SHA-256");
-            masterKeyBytes = sha.digest(secret.getBytes(StandardCharsets.UTF_8));
+            masterKeyBytes = sha.digest(secret.trim().getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             throw new IllegalStateException("Failed to initialize AES key", e);
         }
