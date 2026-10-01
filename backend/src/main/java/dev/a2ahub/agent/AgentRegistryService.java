@@ -1,8 +1,12 @@
 package dev.a2ahub.agent;
 
+import dev.a2ahub.events.AgentEventPublisher;
 import dev.a2ahub.security.SsrfValidator;
+import dev.a2ahub.vector.EmbeddingService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
@@ -18,15 +22,21 @@ public class AgentRegistryService {
     private final AgentRepository agentRepository;
     private final AgentSkillRepository agentSkillRepository;
     private final SsrfValidator ssrfValidator;
+    private final EmbeddingService embeddingService;
+    private final AgentEventPublisher eventPublisher;
     private final RestClient restClient;
 
     public AgentRegistryService(AgentRepository agentRepository,
                                 AgentSkillRepository agentSkillRepository,
                                 SsrfValidator ssrfValidator,
+                                EmbeddingService embeddingService,
+                                AgentEventPublisher eventPublisher,
                                 RestClient.Builder restClientBuilder) {
         this.agentRepository = agentRepository;
         this.agentSkillRepository = agentSkillRepository;
         this.ssrfValidator = ssrfValidator;
+        this.embeddingService = embeddingService;
+        this.eventPublisher = eventPublisher;
         this.restClient = restClientBuilder.build();
     }
 
@@ -39,12 +49,12 @@ public class AgentRegistryService {
         // Validate SSRF defenses before issuing outbound HTTP requests
         ssrfValidator.validateSafeRemoteUrl(agentUrl);
 
-        String fetchUrl = agentUrl.endsWith("/") 
-            ? agentUrl + ".well-known/agent-card.json" 
-            : agentUrl + "/.well-known/agent-card.json";
-            
+        String fetchUrl = agentUrl.endsWith("/")
+                ? agentUrl + ".well-known/agent-card.json"
+                : agentUrl + "/.well-known/agent-card.json";
+
         log.info("Fetching agent card from: {}", fetchUrl);
-        
+
         AgentCard card;
         try {
             card = restClient.get()
@@ -84,11 +94,34 @@ public class AgentRegistryService {
             agentSkillRepository.saveAll(skillEntities);
         }
 
+        // Generate and update vector embedding for semantic discovery
+        String embeddingVector = embeddingService.generateAgentEmbedding(card);
+        if (embeddingVector != null) {
+            try {
+                agentRepository.updateEmbedding(savedAgent.getId(), embeddingVector);
+            } catch (Exception e) {
+                log.warn("Failed to update vector embedding for agent {}: {}", savedAgent.getId(), e.getMessage());
+            }
+        }
+
+        // Broadcast registration event via WebSocket
+        eventPublisher.publishAgentRegistered(savedAgent);
+
         return savedAgent;
     }
 
+    public List<Agent> findAll(int page, int size) {
+        int safePage = Math.max(0, page);
+        int safeSize = Math.min(Math.max(1, size), 100);
+        return agentRepository.findAll(PageRequest.of(
+                safePage,
+                safeSize,
+                Sort.by("name").ascending()
+        )).getContent();
+    }
+
     public List<Agent> findAll() {
-        return agentRepository.findAll();
+        return findAll(0, 50);
     }
 
     public Agent findById(UUID id) {
@@ -100,5 +133,6 @@ public class AgentRegistryService {
     public void unregister(UUID id) {
         agentSkillRepository.deleteByAgentId(id);
         agentRepository.deleteById(id);
+        eventPublisher.publishAgentStatusChanged(id, "UNREGISTERED");
     }
 }

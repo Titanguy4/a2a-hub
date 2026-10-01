@@ -19,7 +19,8 @@ import java.util.UUID;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(DiscoveryController.class)
 @Import({SecurityProperties.class, ApiKeyAuthFilter.class})
@@ -33,14 +34,14 @@ class DiscoveryControllerTest {
     private AgentDiscoveryService discoveryService;
 
     @Test
-    @DisplayName("GET /api/v1/discover - Should discover agents with query parameters")
+    @DisplayName("GET /api/v1/discover - Should discover agents with query parameters and pagination")
     void shouldDiscoverAgents() throws Exception {
         Agent agent = new Agent();
         agent.setId(UUID.randomUUID());
         agent.setName("SearchAgent");
         agent.setUrl("https://search.agent.io");
 
-        when(discoveryService.discover("web_search", "news", "streaming", "technology"))
+        when(discoveryService.discover("web_search", "news", "streaming", "technology", 0, 50))
                 .thenReturn(List.of(agent));
 
         mockMvc.perform(get("/api/v1/discover")
@@ -53,7 +54,29 @@ class DiscoveryControllerTest {
                 .andExpect(jsonPath("$[0].name").value("SearchAgent"))
                 .andExpect(jsonPath("$[0].url").value("https://search.agent.io"));
 
-        verify(discoveryService).discover("web_search", "news", "streaming", "technology");
+        verify(discoveryService).discover("web_search", "news", "streaming", "technology", 0, 50);
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/discover/semantic - Should perform semantic discovery")
+    void shouldDiscoverSemantic() throws Exception {
+        Agent agent = new Agent();
+        agent.setId(UUID.randomUUID());
+        agent.setName("AI Researcher");
+        agent.setUrl("https://ai.agent.io");
+
+        when(discoveryService.discoverSemantic("machine learning pipelines", 10))
+                .thenReturn(List.of(agent));
+
+        mockMvc.perform(get("/api/v1/discover/semantic")
+                        .param("q", "machine learning pipelines")
+                        .param("limit", "10")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].name").value("AI Researcher"))
+                .andExpect(jsonPath("$[0].url").value("https://ai.agent.io"));
+
+        verify(discoveryService).discoverSemantic("machine learning pipelines", 10);
     }
 
     @Test

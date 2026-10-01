@@ -1,12 +1,15 @@
 package dev.a2ahub.agent;
 
+import dev.a2ahub.vector.EmbeddingService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 @Transactional(readOnly = true)
@@ -15,103 +18,91 @@ public class AgentDiscoveryService {
     private static final Logger log = LoggerFactory.getLogger(AgentDiscoveryService.class);
     private final AgentRepository agentRepository;
     private final AgentSkillRepository agentSkillRepository;
+    private final EmbeddingService embeddingService;
 
-    public AgentDiscoveryService(AgentRepository agentRepository, AgentSkillRepository agentSkillRepository) {
+    public AgentDiscoveryService(AgentRepository agentRepository,
+                                 AgentSkillRepository agentSkillRepository,
+                                 EmbeddingService embeddingService) {
         this.agentRepository = agentRepository;
         this.agentSkillRepository = agentSkillRepository;
+        this.embeddingService = embeddingService;
+    }
+
+    /**
+     * Executes index-backed search across agents using PostgreSQL GIN and text matching.
+     */
+    public List<Agent> discover(String skill, String tag, String capability, String query, int page, int size) {
+        String cleanSkill = sanitizeParam(skill);
+        String cleanTag = sanitizeParam(tag);
+        String cleanCapability = sanitizeParam(capability);
+        String cleanQuery = sanitizeParam(query);
+
+        int safePage = Math.max(0, page);
+        int safeSize = Math.min(Math.max(1, size), 100);
+        Pageable pageable = PageRequest.of(safePage, safeSize);
+
+        Page<Agent> resultPage = agentRepository.searchIndexedAgents(
+                cleanSkill,
+                cleanTag,
+                cleanCapability,
+                cleanQuery,
+                pageable
+        );
+
+        return resultPage.getContent();
     }
 
     public List<Agent> discover(String skill, String tag, String capability, String query) {
-        List<Agent> allAgents = agentRepository.findAll();
-
-        if (allAgents.isEmpty()) {
-            return List.of();
-        }
-
-        return allAgents.stream()
-                .filter(agent -> matchesFilter(agent, skill, tag, capability, query))
-                .sorted(Comparator.comparing(Agent::getName))
-                .toList();
+        return discover(skill, tag, capability, query, 0, 50);
     }
 
-    private boolean matchesFilter(Agent agent, String skill, String tag, String capability, String query) {
-        AgentCard card = agent.getAgentCard();
-        if (card == null) {
-            return false;
+    /**
+     * Executes semantic vector search using pgvector cosine distance.
+     */
+    public List<Agent> discoverSemantic(String query, int limit) {
+        if (query == null || query.isBlank()) {
+            return discover(null, null, null, null, 0, limit);
         }
 
-        // 1. Skill filter
-        if (skill != null && !skill.isBlank()) {
-            String lowerSkill = skill.toLowerCase();
-            boolean hasSkill = card.skills() != null && card.skills().stream().anyMatch(s ->
-                    (s.id() != null && s.id().toLowerCase().contains(lowerSkill)) ||
-                    (s.name() != null && s.name().toLowerCase().contains(lowerSkill)) ||
-                    (s.description() != null && s.description().toLowerCase().contains(lowerSkill))
-            );
-            if (!hasSkill) {
-                return false;
+        int safeLimit = Math.min(Math.max(1, limit), 50);
+        String queryVector = embeddingService.generateEmbedding(query);
+
+        if (queryVector == null) {
+            return discover(null, null, null, query, 0, safeLimit);
+        }
+
+        try {
+            List<Agent> results = agentRepository.searchBySemanticEmbedding(queryVector, safeLimit);
+            if (!results.isEmpty()) {
+                return results;
             }
+        } catch (Exception e) {
+            log.warn("pgvector search failed or no embeddings found: {}. Falling back to text search.", e.getMessage());
         }
 
-        // 2. Tag filter
-        if (tag != null && !tag.isBlank()) {
-            String lowerTag = tag.toLowerCase();
-            boolean hasTag = card.skills() != null && card.skills().stream().anyMatch(s ->
-                    s.tags() != null && s.tags().stream().anyMatch(t -> t.equalsIgnoreCase(lowerTag))
-            );
-            if (!hasTag) {
-                return false;
-            }
-        }
-
-        // 3. Capability filter
-        if (capability != null && !capability.isBlank()) {
-            String lowerCap = capability.toLowerCase();
-            boolean hasCap = card.capabilities() != null && card.capabilities().keySet().stream()
-                    .anyMatch(k -> k.toLowerCase().contains(lowerCap));
-            if (!hasCap) {
-                return false;
-            }
-        }
-
-        // 4. Free text / intent search
-        if (query != null && !query.isBlank()) {
-            String lowerQ = query.toLowerCase();
-            boolean matchName = agent.getName() != null && agent.getName().toLowerCase().contains(lowerQ);
-            boolean matchDesc = agent.getDescription() != null && agent.getDescription().toLowerCase().contains(lowerQ);
-            boolean matchSkills = card.skills() != null && card.skills().stream().anyMatch(s ->
-                    (s.name() != null && s.name().toLowerCase().contains(lowerQ)) ||
-                    (s.description() != null && s.description().toLowerCase().contains(lowerQ)) ||
-                    (s.tags() != null && s.tags().stream().anyMatch(t -> t.toLowerCase().contains(lowerQ)))
-            );
-
-            if (!matchName && !matchDesc && !matchSkills) {
-                return false;
-            }
-        }
-
-        return true;
+        return discover(null, null, null, query, 0, safeLimit);
     }
 
+    /**
+     * Returns distinct skill catalog with aggregated agent associations.
+     */
     public List<SkillSummary> getDistinctSkills() {
-        List<Agent> agents = agentRepository.findAll();
+        List<AgentSkillEntity> allSkills = agentSkillRepository.findAll();
         Map<String, SkillSummaryBuilder> skillMap = new LinkedHashMap<>();
 
-        for (Agent agent : agents) {
-            AgentCard card = agent.getAgentCard();
-            if (card != null && card.skills() != null) {
-                for (AgentCard.Skill s : card.skills()) {
-                    String key = s.id() != null && !s.id().isBlank() ? s.id() : s.name();
-                    if (key == null) continue;
-
-                    skillMap.computeIfAbsent(key, k -> new SkillSummaryBuilder(
-                            k,
-                            s.name(),
-                            s.description(),
-                            new HashSet<>(s.tags() != null ? s.tags() : List.of())
-                    )).addAgent(agent.getId());
-                }
+        for (AgentSkillEntity s : allSkills) {
+            String key = s.getSkillId();
+            if (key == null || key.isBlank()) {
+                key = s.getName();
             }
+            if (key == null) continue;
+
+            skillMap.computeIfAbsent(key, k -> new SkillSummaryBuilder(
+                    k,
+                    s.getName(),
+                    s.getDescription(),
+                    new HashSet<>(s.getTags() != null ? s.getTags() : List.of())
+            )).addAgent(s.getAgent() != null ? s.getAgent().getId() : null);
         }
 
         return skillMap.values().stream()
@@ -120,29 +111,22 @@ public class AgentDiscoveryService {
                 .toList();
     }
 
+    /**
+     * Returns distinct tag frequency counts computed directly by PostgreSQL unnest aggregation.
+     */
     public List<TagSummary> getDistinctTags() {
-        List<Agent> agents = agentRepository.findAll();
-        Map<String, Long> tagCounts = new HashMap<>();
+        List<AgentSkillRepository.TagCountProjection> projections = agentSkillRepository.findDistinctTagCounts();
 
-        for (Agent agent : agents) {
-            AgentCard card = agent.getAgentCard();
-            if (card != null && card.skills() != null) {
-                for (AgentCard.Skill s : card.skills()) {
-                    if (s.tags() != null) {
-                        for (String tag : s.tags()) {
-                            if (tag != null && !tag.isBlank()) {
-                                tagCounts.put(tag.toLowerCase(), tagCounts.getOrDefault(tag.toLowerCase(), 0L) + 1);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return tagCounts.entrySet().stream()
-                .map(e -> new TagSummary(e.getKey(), e.getValue()))
-                .sorted((a, b) -> Long.compare(b.count(), a.count()))
+        return projections.stream()
+                .map(p -> new TagSummary(p.getTag(), p.getCount()))
                 .toList();
+    }
+
+    private String sanitizeParam(String param) {
+        if (param == null || param.isBlank()) {
+            return null;
+        }
+        return param.trim();
     }
 
     public record SkillSummary(String skillId, String name, String description, List<String> tags, long agentCount, List<UUID> agentIds) {}
@@ -163,7 +147,9 @@ public class AgentDiscoveryService {
         }
 
         public void addAgent(UUID agentId) {
-            this.agentIds.add(agentId);
+            if (agentId != null) {
+                this.agentIds.add(agentId);
+            }
         }
 
         public SkillSummary build() {

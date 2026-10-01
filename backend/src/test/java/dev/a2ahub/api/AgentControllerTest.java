@@ -76,21 +76,21 @@ class AgentControllerTest {
     }
 
     @Test
-    @DisplayName("GET /api/v1/agents - Should return list of registered agents")
+    @DisplayName("GET /api/v1/agents - Should return paginated list of registered agents")
     void shouldReturnAllAgents() throws Exception {
         Agent agent = new Agent();
         agent.setId(UUID.randomUUID());
         agent.setName("Alpha Agent");
         agent.setUrl("https://alpha.test.io");
 
-        when(agentRegistryService.findAll()).thenReturn(List.of(agent));
+        when(agentRegistryService.findAll(0, 50)).thenReturn(List.of(agent));
 
         mockMvc.perform(get("/api/v1/agents"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].name").value("Alpha Agent"))
                 .andExpect(jsonPath("$[0].url").value("https://alpha.test.io"));
 
-        verify(agentRegistryService).findAll();
+        verify(agentRegistryService).findAll(0, 50);
     }
 
     @Test

@@ -1,12 +1,16 @@
 package dev.a2ahub.agent;
 
+import dev.a2ahub.events.AgentEventPublisher;
 import dev.a2ahub.security.SsrfValidator;
+import dev.a2ahub.vector.EmbeddingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.web.client.RestClient;
 
 import java.net.URI;
@@ -34,6 +38,12 @@ class AgentRegistryServiceTest {
     private SsrfValidator ssrfValidator;
 
     @Mock
+    private EmbeddingService embeddingService;
+
+    @Mock
+    private AgentEventPublisher eventPublisher;
+
+    @Mock
     private RestClient.Builder restClientBuilder;
 
     @Mock
@@ -50,7 +60,14 @@ class AgentRegistryServiceTest {
     @BeforeEach
     void setUp() {
         when(restClientBuilder.build()).thenReturn(restClient);
-        agentRegistryService = new AgentRegistryService(agentRepository, agentSkillRepository, ssrfValidator, restClientBuilder);
+        agentRegistryService = new AgentRegistryService(
+                agentRepository,
+                agentSkillRepository,
+                ssrfValidator,
+                embeddingService,
+                eventPublisher,
+                restClientBuilder
+        );
     }
 
     @Test
@@ -68,7 +85,7 @@ class AgentRegistryServiceTest {
     }
 
     @Test
-    @DisplayName("Should validate SSRF before registering and save normalized skills")
+    @DisplayName("Should validate SSRF before registering, save normalized skills, and persist embedding")
     @SuppressWarnings("unchecked")
     void shouldRegisterAgentAndExtractSkills() {
         String url = "https://weather.example.com";
@@ -84,11 +101,13 @@ class AgentRegistryServiceTest {
         when(responseSpec.body(AgentCard.class)).thenReturn(card);
 
         Agent savedAgent = new Agent();
-        savedAgent.setId(UUID.randomUUID());
+        UUID agentId = UUID.randomUUID();
+        savedAgent.setId(agentId);
         savedAgent.setName(card.name());
         savedAgent.setUrl(url);
 
         when(agentRepository.save(any(Agent.class))).thenReturn(savedAgent);
+        when(embeddingService.generateAgentEmbedding(card)).thenReturn("[0.1,0.2]");
 
         Agent result = agentRegistryService.register(url);
 
@@ -97,6 +116,9 @@ class AgentRegistryServiceTest {
         verify(ssrfValidator).validateSafeRemoteUrl(url);
         verify(agentRepository).save(any(Agent.class));
         verify(agentSkillRepository).saveAll(anyList());
+        verify(embeddingService).generateAgentEmbedding(card);
+        verify(agentRepository).updateEmbedding(agentId, "[0.1,0.2]");
+        verify(eventPublisher).publishAgentRegistered(savedAgent);
     }
 
     @Test
@@ -128,23 +150,23 @@ class AgentRegistryServiceTest {
     }
 
     @Test
-    @DisplayName("Should successfully list all registered agents")
+    @DisplayName("Should successfully list all registered agents with pagination")
     void shouldListAllAgents() {
         Agent a1 = new Agent();
         a1.setName("Agent 1");
         Agent a2 = new Agent();
         a2.setName("Agent 2");
 
-        when(agentRepository.findAll()).thenReturn(List.of(a1, a2));
+        when(agentRepository.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(a1, a2)));
 
-        List<Agent> results = agentRegistryService.findAll();
+        List<Agent> results = agentRegistryService.findAll(0, 50);
 
         assertThat(results).hasSize(2);
-        verify(agentRepository).findAll();
+        verify(agentRepository).findAll(any(Pageable.class));
     }
 
     @Test
-    @DisplayName("Should unregister agent by ID and cleanup skills")
+    @DisplayName("Should unregister agent by ID, cleanup skills, and broadcast event")
     void shouldUnregisterAgent() {
         UUID id = UUID.randomUUID();
         doNothing().when(agentSkillRepository).deleteByAgentId(id);
@@ -154,5 +176,6 @@ class AgentRegistryServiceTest {
 
         verify(agentSkillRepository).deleteByAgentId(id);
         verify(agentRepository).deleteById(id);
+        verify(eventPublisher).publishAgentStatusChanged(id, "UNREGISTERED");
     }
 }

@@ -12,7 +12,6 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/agents")
-@CrossOrigin(origins = "*") // Allows local Vue development
 public class AgentController {
 
     private final AgentRegistryService agentRegistryService;
@@ -28,8 +27,11 @@ public class AgentController {
     }
 
     @GetMapping
-    public List<Agent> getAllAgents() {
-        return agentRegistryService.findAll();
+    public List<Agent> getAllAgents(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size
+    ) {
+        return agentRegistryService.findAll(page, size);
     }
 
     @GetMapping("/{id}")

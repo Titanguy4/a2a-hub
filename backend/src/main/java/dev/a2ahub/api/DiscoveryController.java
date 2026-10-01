@@ -8,7 +8,6 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1")
-@CrossOrigin(origins = "*")
 public class DiscoveryController {
 
     private final AgentDiscoveryService discoveryService;
@@ -22,9 +21,19 @@ public class DiscoveryController {
             @RequestParam(required = false) String skill,
             @RequestParam(required = false) String tag,
             @RequestParam(required = false) String capability,
-            @RequestParam(required = false) String q
+            @RequestParam(required = false) String q,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size
     ) {
-        return discoveryService.discover(skill, tag, capability, q);
+        return discoveryService.discover(skill, tag, capability, q, page, size);
+    }
+
+    @GetMapping("/discover/semantic")
+    public List<Agent> discoverSemantic(
+            @RequestParam String q,
+            @RequestParam(defaultValue = "10") int limit
+    ) {
+        return discoveryService.discoverSemantic(q, limit);
     }
 
     @GetMapping("/skills")

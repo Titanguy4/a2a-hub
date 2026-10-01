@@ -18,4 +18,17 @@ public interface AgentSkillRepository extends JpaRepository<AgentSkillEntity, UU
 
     @Query(value = "SELECT * FROM agent_skills WHERE :tag = ANY(tags)", nativeQuery = true)
     List<AgentSkillEntity> findByTagNative(@Param("tag") String tag);
+
+    @Query(value = """
+        SELECT t AS tag, COUNT(*) AS count
+        FROM agent_skills s, unnest(s.tags) AS t
+        GROUP BY t
+        ORDER BY count DESC, tag ASC
+        """, nativeQuery = true)
+    List<TagCountProjection> findDistinctTagCounts();
+
+    interface TagCountProjection {
+        String getTag();
+        long getCount();
+    }
 }

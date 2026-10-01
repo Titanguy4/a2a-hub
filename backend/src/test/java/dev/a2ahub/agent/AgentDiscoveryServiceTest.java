@@ -1,17 +1,22 @@
 package dev.a2ahub.agent;
 
+import dev.a2ahub.vector.EmbeddingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -24,6 +29,9 @@ class AgentDiscoveryServiceTest {
     @Mock
     private AgentSkillRepository agentSkillRepository;
 
+    @Mock
+    private EmbeddingService embeddingService;
+
     private AgentDiscoveryService discoveryService;
 
     private Agent weatherAgent;
@@ -31,7 +39,7 @@ class AgentDiscoveryServiceTest {
 
     @BeforeEach
     void setUp() {
-        discoveryService = new AgentDiscoveryService(agentRepository, agentSkillRepository);
+        discoveryService = new AgentDiscoveryService(agentRepository, agentSkillRepository, embeddingService);
 
         weatherAgent = new Agent();
         weatherAgent.setId(UUID.randomUUID());
@@ -70,9 +78,10 @@ class AgentDiscoveryServiceTest {
     }
 
     @Test
-    @DisplayName("Should return all agents when no filter is specified")
-    void shouldReturnAllAgentsWhenNoFilter() {
-        when(agentRepository.findAll()).thenReturn(List.of(weatherAgent, calculatorAgent));
+    @DisplayName("Should query indexed agents through repository search query")
+    void shouldReturnAgentsFromIndexedRepositorySearch() {
+        when(agentRepository.searchIndexedAgents(eq(null), eq(null), eq(null), eq(null), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(weatherAgent, calculatorAgent)));
 
         List<Agent> results = discoveryService.discover(null, null, null, null);
 
@@ -80,9 +89,10 @@ class AgentDiscoveryServiceTest {
     }
 
     @Test
-    @DisplayName("Should filter agents by skill ID or name")
+    @DisplayName("Should pass filter parameters to repository search")
     void shouldFilterBySkill() {
-        when(agentRepository.findAll()).thenReturn(List.of(weatherAgent, calculatorAgent));
+        when(agentRepository.searchIndexedAgents(eq("air_quality"), eq(null), eq(null), eq(null), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(weatherAgent)));
 
         List<Agent> results = discoveryService.discover("air_quality", null, null, null);
 
@@ -91,59 +101,64 @@ class AgentDiscoveryServiceTest {
     }
 
     @Test
-    @DisplayName("Should filter agents by tag")
-    void shouldFilterByTag() {
-        when(agentRepository.findAll()).thenReturn(List.of(weatherAgent, calculatorAgent));
+    @DisplayName("Should perform semantic vector search via EmbeddingService and pgvector query")
+    void shouldPerformSemanticSearch() {
+        String query = "meteorological forecast";
+        String mockVector = "[0.1,0.2,0.3]";
 
-        List<Agent> results = discoveryService.discover(null, "finance", null, null);
+        when(embeddingService.generateEmbedding(query)).thenReturn(mockVector);
+        when(agentRepository.searchBySemanticEmbedding(mockVector, 10)).thenReturn(List.of(weatherAgent));
 
-        assertThat(results).hasSize(1);
-        assertThat(results.getFirst().getName()).isEqualTo("MathAgent");
-    }
-
-    @Test
-    @DisplayName("Should filter agents by capability key")
-    void shouldFilterByCapability() {
-        when(agentRepository.findAll()).thenReturn(List.of(weatherAgent, calculatorAgent));
-
-        List<Agent> results = discoveryService.discover(null, null, "streaming", null);
+        List<Agent> results = discoveryService.discoverSemantic(query, 10);
 
         assertThat(results).hasSize(1);
         assertThat(results.getFirst().getName()).isEqualTo("WeatherAgent");
     }
 
     @Test
-    @DisplayName("Should search agents by free-form text query matching description or skills")
-    void shouldSearchByTextQuery() {
-        when(agentRepository.findAll()).thenReturn(List.of(weatherAgent, calculatorAgent));
-
-        List<Agent> results = discoveryService.discover(null, null, null, "equations");
-
-        assertThat(results).hasSize(1);
-        assertThat(results.getFirst().getName()).isEqualTo("MathAgent");
-    }
-
-    @Test
-    @DisplayName("Should aggregate distinct skills across all registered agents")
+    @DisplayName("Should aggregate distinct skills from agentSkillRepository")
     void shouldGetDistinctSkills() {
-        when(agentRepository.findAll()).thenReturn(List.of(weatherAgent, calculatorAgent));
+        AgentSkillEntity s1 = new AgentSkillEntity();
+        s1.setSkillId("get_weather");
+        s1.setName("Current Weather");
+        s1.setDescription("Fetch weather");
+        s1.setTags(List.of("weather"));
+        s1.setAgent(weatherAgent);
+
+        AgentSkillEntity s2 = new AgentSkillEntity();
+        s2.setSkillId("calc");
+        s2.setName("Calculator");
+        s2.setDescription("Calculate equations");
+        s2.setTags(List.of("math"));
+        s2.setAgent(calculatorAgent);
+
+        when(agentSkillRepository.findAll()).thenReturn(List.of(s1, s2));
 
         List<AgentDiscoveryService.SkillSummary> skills = discoveryService.getDistinctSkills();
 
-        assertThat(skills).hasSize(3);
+        assertThat(skills).hasSize(2);
         assertThat(skills.stream().map(AgentDiscoveryService.SkillSummary::name))
-                .containsExactlyInAnyOrder("Air Quality Index", "Current Weather", "Evaluate Expression");
+                .containsExactlyInAnyOrder("Current Weather", "Calculator");
     }
 
     @Test
-    @DisplayName("Should aggregate distinct tags with frequency counts")
+    @DisplayName("Should aggregate distinct tags from PostgreSQL projection")
     void shouldGetDistinctTags() {
-        when(agentRepository.findAll()).thenReturn(List.of(weatherAgent, calculatorAgent));
+        AgentSkillRepository.TagCountProjection p1 = new AgentSkillRepository.TagCountProjection() {
+            @Override public String getTag() { return "weather"; }
+            @Override public long getCount() { return 2; }
+        };
+        AgentSkillRepository.TagCountProjection p2 = new AgentSkillRepository.TagCountProjection() {
+            @Override public String getTag() { return "finance"; }
+            @Override public long getCount() { return 1; }
+        };
+
+        when(agentSkillRepository.findDistinctTagCounts()).thenReturn(List.of(p1, p2));
 
         List<AgentDiscoveryService.TagSummary> tags = discoveryService.getDistinctTags();
 
-        assertThat(tags).isNotEmpty();
-        // "weather" appears in 2 skills of weatherAgent
-        assertThat(tags.stream().filter(t -> t.tag().equals("weather")).findFirst().get().count()).isEqualTo(2);
+        assertThat(tags).hasSize(2);
+        assertThat(tags.getFirst().tag()).isEqualTo("weather");
+        assertThat(tags.getFirst().count()).isEqualTo(2);
     }
 }
