@@ -36,6 +36,7 @@ export interface Agent {
   agentCard: AgentCard;
   registeredAt: string;
   lastSeenAt: string | null;
+  latencyMs?: number;
 }
 
 export interface SkillSummary {
@@ -59,8 +60,49 @@ export interface DiscoverParams {
   q?: string;
 }
 
+export interface HealthCheckItem {
+  id: number;
+  checkedAt: string;
+  status: string;
+  latencyMs: number | null;
+  errorMessage: string | null;
+}
+
+export interface AgentHealthResponse {
+  agentId: string;
+  agentName: string;
+  currentStatus: string;
+  lastSeenAt: string | null;
+  history: HealthCheckItem[];
+}
+
+export interface HubHealthStats {
+  totalAgents: number;
+  healthyAgents: number;
+  degradedAgents: number;
+  offlineAgents: number;
+  unknownAgents: number;
+  averageLatencyMs: number;
+}
+
+export interface AgentStatusEvent {
+  agentId: string;
+  agentName: string;
+  status: 'HEALTHY' | 'DEGRADED' | 'OFFLINE' | 'UNKNOWN';
+  previousStatus: string;
+  latencyMs: number;
+  timestamp: string;
+  message: string;
+}
+
 export const discoveryApi = {
   discover: (params: DiscoverParams) => api.get<Agent[]>('/discover', { params }),
   getSkills: () => api.get<SkillSummary[]>('/skills'),
   getTags: () => api.get<TagSummary[]>('/tags')
+};
+
+export const healthApi = {
+  getAgentHealth: (agentId: string, limit = 30) => api.get<AgentHealthResponse>(`/agents/${agentId}/health`, { params: { limit } }),
+  triggerCheck: (agentId: string) => api.post<{ agentId: string; status: string; latencyMs: number; error: string | null }>(`/agents/${agentId}/health/check`),
+  getStats: () => api.get<HubHealthStats>('/health/stats')
 };
