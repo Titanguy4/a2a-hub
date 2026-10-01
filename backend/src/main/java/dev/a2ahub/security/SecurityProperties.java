@@ -23,6 +23,21 @@ public class SecurityProperties {
     private boolean requireAuthForReads = false;
 
     /**
+     * Secret master key used for AES-GCM-256 encryption of downstream tokens in PostgreSQL.
+     */
+    private String encryptionKey = "a2a-hub-default-master-encryption-key-32bytes!";
+
+    /**
+     * Allowed CORS origins for browser web clients.
+     */
+    private java.util.List<String> allowedOrigins = java.util.List.of(
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000"
+    );
+
+    /**
      * SSRF defense settings.
      */
     private Ssrf ssrf = new Ssrf();

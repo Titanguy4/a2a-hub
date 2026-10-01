@@ -38,6 +38,7 @@ public class Agent {
     @Column(name = "auth_type")
     private String authType = "NONE";
 
+    @Convert(converter = dev.a2ahub.security.AesGcmAttributeConverter.class)
     @Column(name = "auth_token_enc")
     private String authTokenEnc;
 

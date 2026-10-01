@@ -95,4 +95,18 @@ class ApiKeyAuthFilterTest {
 
         verify(filterChain).doFilter(request, response);
     }
+
+    @Test
+    @DisplayName("Should block unauthenticated POST /api/v1/tasks when API key is configured")
+    void shouldBlockUnauthenticatedTaskSubmission() throws ServletException, IOException {
+        securityProperties.setApiKey("secret-token-123");
+
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/tasks");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilterInternal(request, response, filterChain);
+
+        verify(filterChain, never()).doFilter(request, response);
+        assertThat(response.getStatus()).isEqualTo(401);
+    }
 }

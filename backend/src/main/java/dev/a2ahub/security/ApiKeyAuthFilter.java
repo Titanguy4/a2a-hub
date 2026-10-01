@@ -48,10 +48,12 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        // Validate provided credentials
+        // Validate provided credentials with constant-time comparison (defends against timing attacks CWE-208)
         String providedKey = extractApiKey(request);
 
-        if (providedKey == null || !providedKey.equals(configuredKey)) {
+        if (providedKey == null || !java.security.MessageDigest.isEqual(
+                providedKey.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                configuredKey.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
             response.setStatus(HttpStatus.UNAUTHORIZED.value());
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
             response.getWriter().write("{\"error\":\"Unauthorized\",\"message\":\"Invalid or missing API key\"}");
@@ -62,8 +64,9 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     }
 
     private boolean isProtectedEndpoint(String path, String method) {
-        // Mutating agent operations always require auth if a key is configured
-        if (path.startsWith("/api/v1/agents") && ("POST".equalsIgnoreCase(method) || "DELETE".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method))) {
+        // Mutating operations always require auth if a key is configured
+        if ((path.startsWith("/api/v1/agents") || path.startsWith("/api/v1/tasks"))
+                && ("POST".equalsIgnoreCase(method) || "DELETE".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method))) {
             return true;
         }
 
