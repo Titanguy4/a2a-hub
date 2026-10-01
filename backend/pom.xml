@@ -80,10 +80,10 @@
             <version>1.0.0.Beta1</version>
         </dependency>
         -->
-        <!-- LangChain4j for AI Discovery -->
+        <!-- LangChain4j for AI Discovery (Lean core module without legacy OpenNLP/POI/PDFBox dependencies) -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j</artifactId>
+            <artifactId>langchain4j-core</artifactId>
             <version>${langchain4j.version}</version>
         </dependency>
         <dependency>
