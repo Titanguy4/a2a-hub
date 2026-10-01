@@ -2,15 +2,20 @@ package dev.a2ahub.agent;
 
 import dev.a2ahub.health.HealthCheckEntity;
 import dev.a2ahub.health.HealthCheckRepository;
+import dev.a2ahub.security.AesGcmAttributeConverter;
 import dev.a2ahub.security.SecurityProperties;
 import dev.a2ahub.task.TaskEntity;
 import dev.a2ahub.task.TaskRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -28,7 +33,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @Testcontainers
-@Import(SecurityProperties.class)
+@EntityScan(basePackages = "dev.a2ahub")
+@EnableJpaRepositories(basePackages = "dev.a2ahub")
+@Import({SecurityProperties.class, AesGcmAttributeConverter.class})
 @DisplayName("Database & Flyway Hermetic Integration Tests (Testcontainers + PostgreSQL)")
 class AgentDatabaseIntegrationTest {
 
@@ -96,6 +103,17 @@ class AgentDatabaseIntegrationTest {
         List<AgentSkillEntity> skills = agentSkillRepository.findByAgentId(savedAgent.getId());
         assertThat(skills).hasSize(1);
         assertThat(skills.getFirst().getSkillId()).isEqualTo("get_weather");
+
+        // Verify searchIndexedAgents with jsonb_exists and GIN array query
+        Page<Agent> searched = agentRepository.searchIndexedAgents(
+                "get_weather",
+                "weather",
+                "streaming",
+                "IntegrationAgent",
+                PageRequest.of(0, 10)
+        );
+        assertThat(searched.getContent()).isNotEmpty();
+        assertThat(searched.getContent().getFirst().getName()).isEqualTo("IntegrationAgent");
 
         // Cleanup
         agentSkillRepository.deleteByAgentId(savedAgent.getId());

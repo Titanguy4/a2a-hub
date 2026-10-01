@@ -19,7 +19,7 @@ public interface AgentRepository extends JpaRepository<Agent, UUID> {
         LEFT JOIN agent_skills s ON s.agent_id = a.id
         WHERE (:tag IS NULL OR :tag = ANY(s.tags))
           AND (:skill IS NULL OR LOWER(s.skill_id) LIKE LOWER(CONCAT('%', :skill, '%')) OR LOWER(s.name) LIKE LOWER(CONCAT('%', :skill, '%')))
-          AND (:capability IS NULL OR a.agent_card -> 'capabilities' ? :capability)
+          AND (:capability IS NULL OR jsonb_exists(a.agent_card -> 'capabilities', :capability))
           AND (:q IS NULL OR LOWER(a.name) LIKE LOWER(CONCAT('%', :q, '%'))
                       OR LOWER(a.description) LIKE LOWER(CONCAT('%', :q, '%'))
                       OR LOWER(s.name) LIKE LOWER(CONCAT('%', :q, '%'))
@@ -30,7 +30,7 @@ public interface AgentRepository extends JpaRepository<Agent, UUID> {
         LEFT JOIN agent_skills s ON s.agent_id = a.id
         WHERE (:tag IS NULL OR :tag = ANY(s.tags))
           AND (:skill IS NULL OR LOWER(s.skill_id) LIKE LOWER(CONCAT('%', :skill, '%')) OR LOWER(s.name) LIKE LOWER(CONCAT('%', :skill, '%')))
-          AND (:capability IS NULL OR a.agent_card -> 'capabilities' ? :capability)
+          AND (:capability IS NULL OR jsonb_exists(a.agent_card -> 'capabilities', :capability))
           AND (:q IS NULL OR LOWER(a.name) LIKE LOWER(CONCAT('%', :q, '%'))
                       OR LOWER(a.description) LIKE LOWER(CONCAT('%', :q, '%'))
                       OR LOWER(s.name) LIKE LOWER(CONCAT('%', :q, '%'))
