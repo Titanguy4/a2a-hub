@@ -115,6 +115,7 @@ const handleRegister = async () => {
         :key="agent.id" 
         :agent="agent"
         @unregister="store.unregisterAgent(agent.id)"
+        @probe="store.triggerHealthProbe"
       />
     </div>
 

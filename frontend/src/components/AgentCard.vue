@@ -2,7 +2,6 @@
 import { computed, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import type { Agent } from '../services/api';
-import { useAgentStore } from '../stores/agentStore';
 import { Bot, Trash2, Activity, ShieldCheck, Cpu, RefreshCw, ArrowUpRight } from 'lucide-vue-next';
 
 const props = defineProps<{
@@ -10,11 +9,11 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'unregister'): void
+  (e: 'unregister'): void;
+  (e: 'probe', id: string): void;
 }>();
 
 const router = useRouter();
-const store = useAgentStore();
 const probing = ref(false);
 
 const statusColor = computed(() => {
@@ -53,20 +52,19 @@ const statusBgClass = computed(() => {
   }
 });
 
-const handleQuickProbe = async (e: Event) => {
+const handleQuickProbe = (e: Event) => {
   e.stopPropagation();
   probing.value = true;
-  try {
-    await store.triggerHealthProbe(props.agent.id);
-  } catch (err) {
-    console.error('Probe failed:', err);
-  } finally {
+  emit('probe', props.agent.id);
+  setTimeout(() => {
     probing.value = false;
-  }
+  }, 1200);
 };
 
 const goToDetail = () => {
-  router.push(`/agents/${props.agent.id}`);
+  if (router) {
+    router.push(`/agents/${props.agent.id}`);
+  }
 };
 </script>
 
