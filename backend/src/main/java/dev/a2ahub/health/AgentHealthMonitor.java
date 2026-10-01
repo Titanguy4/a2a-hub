@@ -9,9 +9,7 @@ import dev.a2ahub.ws.AgentStatusEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.web.client.ClientHttpRequestFactories;
-import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
-import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -52,10 +50,9 @@ public class AgentHealthMonitor {
         this.eventPublisher = eventPublisher;
         this.ssrfValidator = ssrfValidator;
 
-        ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.DEFAULTS
-                .withConnectTimeout(Duration.ofMillis(PROBE_TIMEOUT_MS))
-                .withReadTimeout(Duration.ofMillis(PROBE_TIMEOUT_MS));
-        ClientHttpRequestFactory requestFactory = ClientHttpRequestFactories.get(settings);
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Duration.ofMillis(PROBE_TIMEOUT_MS));
+        requestFactory.setReadTimeout(Duration.ofMillis(PROBE_TIMEOUT_MS));
 
         this.probeClient = restClientBuilder
                 .requestFactory(requestFactory)
