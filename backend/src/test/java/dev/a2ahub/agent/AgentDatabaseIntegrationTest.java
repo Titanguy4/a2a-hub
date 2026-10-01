@@ -1,6 +1,10 @@
 package dev.a2ahub.agent;
 
+import dev.a2ahub.health.HealthCheckEntity;
+import dev.a2ahub.health.HealthCheckRepository;
 import dev.a2ahub.security.SecurityProperties;
+import dev.a2ahub.task.TaskEntity;
+import dev.a2ahub.task.TaskRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +17,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -47,6 +52,12 @@ class AgentDatabaseIntegrationTest {
 
     @Autowired
     private AgentSkillRepository agentSkillRepository;
+
+    @Autowired
+    private HealthCheckRepository healthCheckRepository;
+
+    @Autowired
+    private TaskRepository taskRepository;
 
     @Test
     @DisplayName("Should persist and retrieve Agent with JSONB AgentCard and skills")
@@ -92,5 +103,47 @@ class AgentDatabaseIntegrationTest {
 
         assertThat(agentRepository.findById(savedAgent.getId())).isEmpty();
         assertThat(agentSkillRepository.findByAgentId(savedAgent.getId())).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Should persist and retrieve health check entries and tasks")
+    void shouldPersistHealthChecksAndTasks() {
+        Agent agent = new Agent();
+        agent.setName("TaskAgent");
+        agent.setUrl("https://task.agent.io");
+        agent.setStatus("HEALTHY");
+        agent.setAgentCard(new AgentCard("TaskAgent", "desc", "https://task.agent.io", "1.0", List.of(), Map.of(), List.of()));
+        Agent savedAgent = agentRepository.save(agent);
+
+        // Persist HealthCheck
+        HealthCheckEntity check = new HealthCheckEntity();
+        check.setAgent(savedAgent);
+        check.setStatus("HEALTHY");
+        check.setLatencyMs(45);
+        check.setCheckedAt(ZonedDateTime.now());
+        HealthCheckEntity savedCheck = healthCheckRepository.save(check);
+        assertThat(savedCheck.getId()).isNotNull();
+
+        List<HealthCheckEntity> checks = healthCheckRepository.findTop10ByAgentIdOrderByCheckedAtDesc(savedAgent.getId());
+        assertThat(checks).hasSize(1);
+        assertThat(checks.getFirst().getLatencyMs()).isEqualTo(45);
+
+        // Persist Task
+        TaskEntity task = new TaskEntity();
+        task.setAgent(savedAgent);
+        task.setContextId("integration-ctx-1");
+        task.setState("WORKING");
+        task.setRequest(Map.of("prompt", "analyze dataset"));
+        TaskEntity savedTask = taskRepository.save(task);
+        assertThat(savedTask.getId()).isNotNull();
+
+        List<TaskEntity> tasks = taskRepository.findByAgentIdOrderByCreatedAtDesc(savedAgent.getId());
+        assertThat(tasks).hasSize(1);
+        assertThat(tasks.getFirst().getState()).isEqualTo("WORKING");
+
+        // Cleanup
+        taskRepository.delete(savedTask);
+        healthCheckRepository.delete(savedCheck);
+        agentRepository.delete(savedAgent);
     }
 }

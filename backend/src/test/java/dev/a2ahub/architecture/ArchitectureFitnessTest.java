@@ -13,8 +13,7 @@ public class ArchitectureFitnessTest {
 
     @ArchTest
     static final ArchRule servicesShouldNotDependOnControllers = noClasses()
-            .that().resideInAPackage("..agent..")
-            .and().haveSimpleNameEndingWith("Service")
+            .that().haveSimpleNameEndingWith("Service")
             .should().dependOnClassesThat().resideInAPackage("..api..");
 
     @ArchTest
@@ -26,4 +25,9 @@ public class ArchitectureFitnessTest {
     static final ArchRule securityShouldNotDependOnControllers = noClasses()
             .that().resideInAPackage("..security..")
             .should().dependOnClassesThat().resideInAPackage("..api..");
+
+    @ArchTest
+    static final ArchRule repositoriesShouldBeInterfaces = classes()
+            .that().haveSimpleNameEndingWith("Repository")
+            .should().beInterfaces();
 }
