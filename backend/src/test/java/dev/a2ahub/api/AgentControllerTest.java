@@ -94,6 +94,27 @@ class AgentControllerTest {
     }
 
     @Test
+    @DisplayName("GET /api/v1/agents/{id} - Should never leak authTokenEnc in JSON payload (CWE-200)")
+    void shouldNeverLeakAuthTokenEncInJsonResponse() throws Exception {
+        UUID agentId = UUID.randomUUID();
+        Agent agent = new Agent();
+        agent.setId(agentId);
+        agent.setName("SecureAgent");
+        agent.setUrl("https://secure.agent.io");
+        agent.setAuthType("BEARER");
+        agent.setAuthTokenEnc("super-secret-token-that-must-not-leak");
+
+        when(agentRegistryService.findById(agentId)).thenReturn(agent);
+
+        mockMvc.perform(get("/api/v1/agents/{id}", agentId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(agentId.toString()))
+                .andExpect(jsonPath("$.name").value("SecureAgent"))
+                .andExpect(jsonPath("$.authTokenEnc").doesNotExist())
+                .andExpect(jsonPath("$.auth_token_enc").doesNotExist());
+    }
+
+    @Test
     @DisplayName("GET /api/v1/agents/{id} - Should return 400 when agent not found")
     void shouldReturn400WhenAgentNotFound() throws Exception {
         UUID nonExistentId = UUID.randomUUID();
