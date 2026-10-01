@@ -105,6 +105,16 @@ class TaskServiceTest {
             return t;
         });
 
+        when(taskRepository.findById(any(UUID.class))).thenAnswer(i -> {
+            UUID id = i.getArgument(0);
+            TaskEntity t = new TaskEntity();
+            t.setId(id);
+            t.setAgent(agent);
+            t.setState("SUBMITTED");
+            t.setRequest(Map.of("input", "hello"));
+            return Optional.of(t);
+        });
+
         when(restClient.post()).thenReturn(requestBodyUriSpec);
         when(requestBodyUriSpec.uri(any(URI.class))).thenReturn(requestBodySpec);
         when(requestBodySpec.contentType(MediaType.APPLICATION_JSON)).thenReturn(requestBodySpec);

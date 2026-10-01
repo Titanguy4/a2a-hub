@@ -41,7 +41,6 @@ public class TaskService {
         this.restClient = restClientBuilder.build();
     }
 
-    @Transactional
     public TaskDto submitTask(SubmitTaskRequest submitRequest) {
         if (submitRequest.agentId() == null) {
             throw new IllegalArgumentException("Agent ID is required to submit a task");
@@ -57,43 +56,63 @@ public class TaskService {
             throw new IllegalStateException("Target agent " + agent.getName() + " is currently OFFLINE");
         }
 
-        TaskEntity task = new TaskEntity();
-        task.setAgent(agent);
-        task.setContextId(submitRequest.contextId() != null ? submitRequest.contextId() : UUID.randomUUID().toString());
-        task.setRequest(submitRequest.payload());
-        task.setState("SUBMITTED");
-        task = taskRepository.save(task);
+        // Phase 1: Persist initial task in SUBMITTED state (short transaction)
+        TaskEntity task = createSubmittedTask(agent, submitRequest.contextId(), submitRequest.payload());
 
-        // Execute task proxying against downstream agent endpoint
+        // Phase 2: Execute task proxying against downstream agent endpoint WITHOUT holding DB transaction
         String endpoint = agent.getUrl().endsWith("/") ? agent.getUrl() + "tasks" : agent.getUrl() + "/tasks";
+        String finalState;
+        Map<String, Object> responseBody = null;
+        String errorMessage = null;
 
         try {
             ssrfValidator.validateSafeRemoteUrl(agent.getUrl());
-            task.setState("WORKING");
-            task.setUpdatedAt(ZonedDateTime.now());
 
-            Map<String, Object> responseBody = restClient.post()
+            responseBody = restClient.post()
                     .uri(URI.create(endpoint))
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(submitRequest.payload())
                     .retrieve()
                     .body(new ParameterizedTypeReference<Map<String, Object>>() {});
 
-            task.setState("COMPLETED");
-            task.setResponse(responseBody != null ? responseBody : Map.of("status", "ok"));
+            finalState = "COMPLETED";
+            if (responseBody == null) {
+                responseBody = Map.of("status", "ok");
+            }
         } catch (Exception e) {
             log.warn("Task execution failed for agent {}: {}", agent.getName(), e.getMessage());
-            task.setState("FAILED");
-            task.setErrorDetail(e.getMessage());
+            finalState = "FAILED";
+            errorMessage = e.getMessage();
         }
 
-        task.setUpdatedAt(ZonedDateTime.now());
-        task = taskRepository.save(task);
+        // Phase 3: Persist final task state and response in short transaction
+        TaskEntity updatedTask = updateTaskResult(task.getId(), finalState, responseBody, errorMessage);
 
-        TaskDto dto = toDto(task);
+        TaskDto dto = toDto(updatedTask);
         eventPublisher.publishTaskUpdated(dto);
 
         return dto;
+    }
+
+    @Transactional
+    public TaskEntity createSubmittedTask(Agent agent, String contextId, Map<String, Object> payload) {
+        TaskEntity task = new TaskEntity();
+        task.setAgent(agent);
+        task.setContextId(contextId != null ? contextId : UUID.randomUUID().toString());
+        task.setRequest(payload);
+        task.setState("SUBMITTED");
+        return taskRepository.save(task);
+    }
+
+    @Transactional
+    public TaskEntity updateTaskResult(UUID taskId, String state, Map<String, Object> response, String errorDetail) {
+        TaskEntity task = taskRepository.findById(taskId)
+                .orElseThrow(() -> new IllegalStateException("Task not found with ID: " + taskId));
+        task.setState(state);
+        task.setResponse(response);
+        task.setErrorDetail(errorDetail);
+        task.setUpdatedAt(ZonedDateTime.now());
+        return taskRepository.save(task);
     }
 
     public TaskDto findById(UUID id) {
