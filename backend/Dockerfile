@@ -1,4 +1,4 @@
-FROM maven:3.9.6-eclipse-temurin-21 AS build
+FROM maven:3.9.9-eclipse-temurin-21 AS build
 WORKDIR /app
 COPY pom.xml .
 RUN mvn dependency:go-offline -B
@@ -8,8 +8,10 @@ RUN mvn package -DskipTests
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
-# Create a non-privileged user and group for runtime security
-RUN addgroup -S a2agroup && adduser -S a2a -G a2agroup
+# Upgrade base OS packages to resolve system-level CVEs and create non-privileged user
+RUN apk upgrade --no-cache && \
+    addgroup -S a2agroup && \
+    adduser -S a2a -G a2agroup
 
 COPY --from=build --chown=a2a:a2agroup /app/target/*.jar app.jar
 
