@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useAgentStore } from '../agentStore';
-import { api, type Agent } from '../../services/api';
+import { api, healthApi, type Agent } from '../../services/api';
 
 const mockAgent: Agent = {
   id: 'agent-123',
@@ -29,6 +29,16 @@ describe('useAgentStore Pinia Store', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.restoreAllMocks();
+    vi.spyOn(healthApi, 'getStats').mockResolvedValue({
+      data: {
+        totalAgents: 1,
+        healthyAgents: 1,
+        degradedAgents: 0,
+        offlineAgents: 0,
+        unknownAgents: 0,
+        averageLatencyMs: 25.0
+      }
+    } as any);
   });
 
   it('initializes with default empty state', () => {
