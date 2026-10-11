@@ -67,7 +67,7 @@ class AgentHealthControllerTest {
     void shouldTriggerManualProbe() throws Exception {
         UUID agentId = UUID.randomUUID();
         when(agentHealthService.triggerHealthCheck(agentId)).thenReturn(
-                new AgentHealthMonitor.HealthCheckResult(agentId, "HEALTHY", 85, null)
+                new AgentHealthMonitor.HealthCheckResult(agentId, "HEALTHY", 85)
         );
 
         mockMvc.perform(post("/api/v1/agents/{id}/health/check", agentId)

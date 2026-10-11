@@ -205,5 +205,17 @@ public class AgentHealthMonitor {
     }
 
     public record AgentTarget(UUID id, String name, String url) {}
-    public record HealthCheckResult(UUID agentId, String status, int latencyMs, String error) {}
+
+    public record HealthCheckResult(UUID agentId, String status, int latencyMs, String error) {
+        public HealthCheckResult(UUID agentId, String status, int latencyMs, String error) {
+            this.agentId = agentId;
+            this.status = status;
+            this.latencyMs = latencyMs;
+            this.error = error;
+        }
+
+        public HealthCheckResult(UUID agentId, String status, int latencyMs) {
+            this(agentId, status, latencyMs, null);
+        }
+    }
 }

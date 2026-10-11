@@ -212,7 +212,12 @@ public class TaskService {
         }
     }
 
-    public record TaskExecutionResponse(TaskDto task, boolean isAsync) {}
+    public record TaskExecutionResponse(TaskDto task, boolean isAsync) {
+        public TaskExecutionResponse(TaskDto task, boolean isAsync) {
+            this.task = task;
+            this.isAsync = isAsync;
+        }
+    }
 
     public record TaskDto(
             UUID id,
@@ -225,5 +230,29 @@ public class TaskService {
             String errorDetail,
             ZonedDateTime createdAt,
             ZonedDateTime updatedAt
-    ) {}
+    ) {
+        public TaskDto(
+                UUID id,
+                UUID agentId,
+                String agentName,
+                String contextId,
+                String state,
+                Map<String, Object> request,
+                Map<String, Object> response,
+                String errorDetail,
+                ZonedDateTime createdAt,
+                ZonedDateTime updatedAt
+        ) {
+            this.id = id;
+            this.agentId = agentId;
+            this.agentName = agentName;
+            this.contextId = contextId;
+            this.state = state;
+            this.request = request;
+            this.response = response;
+            this.errorDetail = errorDetail;
+            this.createdAt = createdAt;
+            this.updatedAt = updatedAt;
+        }
+    }
 }

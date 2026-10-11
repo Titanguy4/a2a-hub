@@ -2,6 +2,7 @@ package dev.a2ahub.weather;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.mockito.Answers;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,7 +16,6 @@ import java.util.function.Consumer;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -62,7 +62,7 @@ class WeatherAgentControllerTest {
     @DisplayName("b) POST /tasks happy path mocking chatClient prompt call content")
     void testPostTasksHappyPath() throws Exception {
         ChatClient chatClient = chatClientBuilder.defaultSystem(anyString()).build();
-        when(chatClient.prompt().user(any(Consumer.class)).call().content())
+        when(chatClient.prompt().user(ArgumentMatchers.<Consumer<ChatClient.PromptUserSpec>>any()).call().content())
                 .thenReturn("Madrid: 24°C, Sunny");
 
         mockMvc.perform(post("/tasks")
