@@ -21,119 +21,279 @@
 
 ## Why This Exists
 
-The [Agent2Agent (A2A) Protocol](https://github.com/a2aproject/A2A) standardizes how autonomous AI agents describe their capabilities and negotiate tasks. While client libraries handle peer-to-peer communication, multi-agent systems in enterprise environments require a central registry to:
+The [Agent2Agent (A2A) Protocol](https://github.com/a2aproject/A2A) standardizes how autonomous agents publish capability manifests and negotiate work. While client-side SDKs handle point-to-point communication between known endpoints, multi-agent deployments require an infrastructure registry to:
 
-1. **Resolve agent capabilities dynamically** instead of hardcoding service endpoints.
-2. **Monitor availability and health** without coupling client agents to polling logic.
-3. **Provide semantic discovery** so tasks phrased in plain language match the most suitable agent.
+1. **Resolve agent endpoints dynamically** instead of hardcoding service hostnames and ports into client agents.
+2. **Monitor availability and latency** via non-blocking background probes, eliminating health polling overhead from calling agents.
+3. **Execute semantic capability routing** so natural language task requests match the most qualified agent without static rule engines.
 
-This project addresses the gap discussed in [a2aproject/a2a-java#683](https://github.com/a2aproject/a2a-java/issues/683) by providing an open-source, production-ready registry and web dashboard built on Java 21 and Spring Boot 3.4.
+This project addresses the operational registry gap discussed in [a2aproject/a2a-java#683](https://github.com/a2aproject/a2a-java/issues/683), delivering an enterprise-hardened hub and monitoring dashboard built on Java 21, Spring Boot 3.4, and PostgreSQL 16.
 
-## System Architecture
+---
+
+## Architecture & Concurrency Model
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                         A2A-Hub                              │
-│                                                              │
-│  ┌─────────────┐   ┌──────────────┐   ┌──────────────────┐  │
-│  │  Vue 3 UI   │◄──│  WebSocket   │   │  REST API        │  │
-│  │  (Vite)     │   │  /ws/agents  │   │  /api/v1/agents  │  │
-│  └──────┬──────┘   └──────┬───────┘   └────────┬─────────┘  │
-│         │                 │                    │             │
-│  ┌──────▼─────────────────▼────────────────────▼──────────┐  │
-│  │       Spring Boot 3.4 Runtime (Virtual Threads)         │  │
-│  │  • AgentRegistryService    • AgentHealthMonitor        │  │
-│  │  • AgentDiscoveryService   • TaskProxyService          │  │
-│  └──────────────────────────┬──────────────────────────────┘  │
-│                             │                                │
-│  ┌──────────────────────────▼──────────────────────────────┐  │
-│  │         PostgreSQL 16 + pgvector (HNSW Indexing)        │  │
-│  └─────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
-         │ HTTP / JSON-RPC / REST
-         ▼
-┌────────────────┐  ┌────────────────┐  ┌────────────────┐
-│  Agent A       │  │  Agent B       │  │  Agent N       │
-│  /.well-known/ │  │  /.well-known/ │  │  /.well-known/ │
-│  agent-card... │  │  agent-card... │  │  agent-card... │
-└────────────────┘  └────────────────┘  └────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                              A2A-Hub                                   │
+│                                                                        │
+│   ┌───────────────┐     ┌────────────────┐     ┌───────────────────┐   │
+│   │  Vue 3.5 UI   │◄───►│  WebSocket     │     │  REST Endpoints   │   │
+│   │  (Vite / SPA) │     │  /ws/agents    │     │  /api/v1/*        │   │
+│   └───────┬───────┘     └────────┬───────┘     └─────────┬─────────┘   │
+│           │                      │                       │             │
+│   ┌───────▼──────────────────────▼───────────────────────▼─────────┐   │
+│   │             Spring Boot 3.4 (Java 21 Virtual Threads)          │   │
+│   │                                                                │   │
+│   │  • SsrfValidator          • ApiKeyAuthFilter (Constant-time)   │   │
+│   │  • AgentRegistryService   • AgentDiscoveryService (pgvector)   │   │
+│   │  • AgentHealthMonitor     • TaskService (RFC 7240 Async Proxy) │   │
+│   │  • A2AOrchestrator        • AgentBootstrapService              │   │
+│   └──────────────────────────────┬─────────────────────────────────┘   │
+│                                  │ HikariCP (Connection Pool = 20)    │
+│   ┌──────────────────────────────▼─────────────────────────────────┐   │
+│   │                PostgreSQL 16 + pgvector                        │   │
+│   │  • agents (UUIDv7, lock_version, JSONB card, vector(768))      │   │
+│   │  • agent_skills (GIN tags index, foreign key B-tree index)     │   │
+│   │  • health_checks (Partial covering latency index, FIFO prune)  │   │
+│   │  • tasks (Keyset pagination index, TOAST covering index)       │   │
+│   └────────────────────────────────────────────────────────────────┘   │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │ Outbound HTTP / JSON-RPC Probes
+                                    │ (Virtual Threads, Zero DB Holds)
+                                    ▼
+       ┌────────────────────────────┬────────────────────────────┐
+       │                            │                            │
+       ▼                            ▼                            ▼
+┌─────────────────────────┐  ┌─────────────────────────┐  ┌─────────────────────────┐
+│ weather-agent (8081)    │  │ calculator-agent (8082) │  │ External Agents         │
+│ • Spring AI 1.0         │  │ • LangChain4j           │  │ • A2A v1.0 Spec         │
+│ • /.well-known/agent... │  │ • /.well-known/agent... │  │ • /.well-known/agent... │
+│ • POST /tasks           │  │ • POST /tasks           │  │ • POST /tasks           │
+└─────────────────────────┘  └─────────────────────────┘  └─────────────────────────┘
 ```
+
+---
+
+## Core Engineering Implementations
+
+- **RFC 9562 UUIDv7 Clustered Primary Keys:** Entity IDs are generated via SQL `uuid_generate_v7()` using `clock_timestamp()` and cryptographic entropy. Monotonic time ordering preserves $O(1)$ B-tree insert locality and eliminates random page splits.
+- **Optimistic Concurrency Control:** Hibernate `@Version lock_version` on `agents` and `tasks` protects against race conditions and concurrent overwrite hazards.
+- **SSRF Multi-IP Rebinding Defenses:** `SsrfValidator` resolves all host IPs (`getAllByName`), rejecting loopback, carrier-grade NAT (`100.64.0.0/10`), link-local, RFC 1918 subnets, cloud metadata (`169.254.169.254`), and IPv6 ULA (`fc00::/7`).
+- **Constant-Time Authentication & Path Normalization:** `ApiKeyAuthFilter` uses Spring MVC path canonicalization and constant-time byte comparisons (`MessageDigest.isEqual`) to prevent CWE-208 timing side channels.
+- **Non-Blocking Virtual Thread Health Probing:** Probes execute across Java 21 Virtual Threads without leasing database connections during outbound network I/O. Results are written via dedicated persistence workers in short `<2ms` `@Transactional(REQUIRES_NEW)` scopes.
+- **Chunked FIFO Table Pruning:** Scheduled maintenance purges historical telemetry with non-blocking CTE queries (`WITH doomed AS ... DELETE ... LIMIT 5000`) and 50ms pauses, preventing MVCC table bloat and WAL spikes.
+- **RFC 7240 Asynchronous Task Proxying:** Supports both immediate synchronous execution (`201 Created`) and asynchronous delegation (`202 Accepted` with `Location` header and `Preference-Applied: respond-async`).
+- **Keyset Cursor Pagination:** Queries use composite B-tree indexes `(agent_id, id DESC)` with covering columns to bypass PostgreSQL TOAST table reads entirely during pagination.
+- **AI Triage with Anti-Hallucination Gate:** `A2AOrchestrator` uses LangChain4j and Google Gemini with temperature 0.0, 1000-char input bounding, and XML delimiters (`<candidate_pool>`, `<user_task>`). A post-routing validation gate guarantees that selected agent UUIDs exist in the retrieved pool; if violated or unconfigured, the system falls back to `pgvector` cosine similarity with explicit telemetry codes.
+- **Reference Microservices:** Hardened containerized reference agents (`weather-agent` on Spring AI 1.0, `calculator-agent` on LangChain4j) with domain refusal constraints and automated seed bootstrap discovery (`a2ahub.bootstrap.agents`).
+
+---
 
 ## Quickstart
 
 ### Prerequisites
-- Docker & Docker Compose
-- Java 21 JDK (optional, if running outside Docker)
-- Node.js 20+ (optional, for frontend dev server)
+- Docker Engine 24+ & Docker Compose v2+
+- Java 21 JDK (optional, if compiling outside Docker)
+- Node.js 20+ (optional, for frontend development)
 
-### 1. Clone & Start Infrastructure
+### 1. Run Complete Infrastructure Stack
 ```bash
 git clone https://github.com/oscarbol09/a2a-hub.git
 cd a2a-hub
 
-# Start PostgreSQL with pgvector extension
-docker-compose up -d postgres
+# Build and start PostgreSQL (pgvector:pg16), Backend, WeatherAgent, and CalculatorAgent
+docker-compose up -d --build
+
+# Verify healthy status across containers
+docker-compose ps
 ```
 
-### 2. Run the Backend
-```bash
-cd backend
-./mvnw spring-boot:run
-```
-The API starts on `http://localhost:8080`. Flyway runs migrations automatically on boot.
+The services will be available at:
+- **A2A-Hub Backend API:** `http://localhost:8080` (Swagger UI: `http://localhost:8080/swagger-ui.html`)
+- **Weather Reference Agent:** `http://localhost:8081` (`/.well-known/agent-card.json`)
+- **Calculator Reference Agent:** `http://localhost:8082` (`/.well-known/agent-card.json`)
+- **PostgreSQL Database:** `localhost:5432`
 
-### 3. Run the Web Dashboard
+### 2. Run Web Dashboard (Development)
 ```bash
-cd ../frontend
+cd frontend
 npm install
 npm run dev
 ```
-Open `http://localhost:5173` to access the registry UI.
+Open `http://localhost:5173` to access the registry, live topology monitor, and orchestration console.
 
-## API Usage
+---
 
-### Register an Agent
-Fetch and index an agent's `agent-card.json`:
+## Production Configuration Reference
 
+| Environment Variable | Property Key | Default Value | Description |
+| :--- | :--- | :--- | :--- |
+| `DB_HOST` | `spring.datasource.url` | `localhost` | PostgreSQL host. |
+| `DB_PORT` | `spring.datasource.url` | `5432` | PostgreSQL port. |
+| `DB_NAME` | `spring.datasource.url` | `a2ahub` | Database name. |
+| `DB_USER` | `spring.datasource.username` | `postgres` | Database username. |
+| `DB_PASSWORD` | `spring.datasource.password` | `postgres` | Database password. |
+| `A2A_HUB_API_KEY` | `a2ahub.security.api-key` | *(empty)* | If set, enforces `X-API-Key` or `Authorization: Bearer` on mutating endpoints. If empty, local open mode is enabled. |
+| `A2A_HUB_ENCRYPTION_KEY` | `a2ahub.security.encryption-key` | *(dev fallback)* | Master secret for AES-256-GCM token encryption. Must be at least 16 characters in production. |
+| `A2A_HUB_REQUIRE_AUTH_READS` | `a2ahub.security.require-auth-for-reads` | `false` | If `true`, requires API key authentication for read-only GET endpoints. |
+| `A2A_HUB_ALLOW_PRIVATE_NETWORKS` | `a2ahub.security.ssrf.allow-private-networks` | `false` | If `false`, blocks loopback, private RFC 1918, link-local, and cloud metadata addresses. Set `true` only for containerized test networks. |
+| `GEMINI_API_KEY` | `a2ahub.gemini.api-key` | *(empty)* | Google Gemini API key for AI orchestration triage. If empty, orchestrator falls back to vector similarity. |
+| `A2A_HUB_HEALTH_INTERVAL_MS` | `a2ahub.health.interval-ms` | `30000` | Probing frequency in milliseconds across all registered agents. |
+| `A2A_HUB_HEALTH_RETENTION_HOURS` | `a2ahub.health.retention-hours` | `48` | Retention period for health check logs. Hourly cron executes chunked batch CTE pruning for records exceeding this threshold. |
+| `A2A_HUB_BOOTSTRAP_AGENTS` | `a2ahub.bootstrap.agents` | *(empty)* | Comma-delimited list of seed URLs automatically registered and periodically reconciled on boot. |
+
+---
+
+## Core API Reference
+
+### 1. Register an Agent (`POST /api/v1/agents`)
+Fetches and validates the agent's remote `agent-card.json`:
 ```bash
 curl -X POST http://localhost:8080/api/v1/agents \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://weather-agent.internal.net"}'
+  -d '{"url": "http://weather-agent:8081"}'
 ```
-
 Response (`201 Created`):
 ```json
 {
-  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "id": "01927e10-6fa2-7c88-990a-c184742e9432",
   "name": "WeatherAgent",
-  "description": "Provides real-time meteorological data and forecasts.",
-  "url": "https://weather-agent.internal.net",
+  "description": "Real-time weather forecasting and meteorological assistant",
+  "url": "http://weather-agent:8081",
   "version": "1.0.0",
   "status": "HEALTHY",
   "authType": "NONE",
-  "registeredAt": "2026-09-28T20:00:00Z"
+  "registeredAt": "2026-10-11T18:00:00Z"
 }
 ```
 
-### List Registered Agents
+### 2. Semantic Hybrid Discovery (`GET /api/v1/discover/semantic`)
+Performs cosine distance search over 768-dimensional skill embeddings via `pgvector`:
 ```bash
-curl -s http://localhost:8080/api/v1/agents | jq .
+curl -G "http://localhost:8080/api/v1/discover/semantic" \
+  --data-urlencode "q=meteorological forecast and atmospheric conditions" \
+  --data-urlencode "limit=5"
 ```
 
-## Engineering Decisions & Trade-offs
+### 3. AI Orchestration Triage (`POST /api/v1/orchestration/suggest`)
+Evaluates candidate agents using Gemini with prompt injection isolation and automatic fallback:
+```bash
+curl -X POST http://localhost:8080/api/v1/orchestration/suggest \
+  -H "Content-Type: application/json" \
+  -d '{"taskDescription": "What is the expected temperature in Bogota tomorrow?"}'
+```
+Response (`200 OK`):
+```json
+{
+  "agentId": "01927e10-6fa2-7c88-990a-c184742e9432",
+  "agentName": "WeatherAgent",
+  "reasoning": "The user query requests temperature and meteorological forecast for Bogota, directly matching WeatherAgent.",
+  "source": "LLM_REASONING",
+  "fallback": false,
+  "confidenceScore": 0.95,
+  "fallbackReason": null
+}
+```
 
-- **Virtual Threads over Reactive Streams:** We use Java 21 Virtual Threads (`spring.threads.virtual.enabled=true`) alongside synchronous `RestClient`. This avoids the debugging complexity and reactive virus of Project Reactor while sustaining thousands of concurrent outbound agent health probes.
-- **PostgreSQL JSONB + pgvector:** Rather than running separate relational and vector databases, we store raw `AgentCard` payloads in PostgreSQL `JSONB` columns and index skill embeddings using `pgvector` with HNSW cosine distance operators.
-- **SSRF Hardening:** The registry resolves and inspects agent hostnames to reject loopback addresses, private IP ranges (RFC 1918), and cloud metadata services (`169.254.169.254`) in production configurations.
+### 4. Synchronous Task Execution (`POST /api/v1/tasks`)
+Proxies task to agent endpoint and returns result synchronously:
+```bash
+curl -X POST http://localhost:8080/api/v1/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agentId": "01927e10-6fa2-7c88-990a-c184742e9432",
+    "contextId": "ctx-9812",
+    "payload": {
+      "query": "Check current weather in Paris"
+    }
+  }'
+```
+Response (`201 Created`):
+```json
+{
+  "id": "01927e12-8bb1-7a11-b021-998811223344",
+  "agentId": "01927e10-6fa2-7c88-990a-c184742e9432",
+  "agentName": "WeatherAgent",
+  "contextId": "ctx-9812",
+  "state": "COMPLETED",
+  "request": { "query": "Check current weather in Paris" },
+  "response": { "status": "ok", "result": "18°C, Partly Cloudy", "contextId": "ctx-9812" },
+  "errorDetail": null,
+  "createdAt": "2026-10-11T18:05:00Z",
+  "updatedAt": "2026-10-11T18:05:01Z"
+}
+```
+
+### 5. Asynchronous Task Delegation via RFC 7240 (`POST /api/v1/tasks`)
+Dispatches long-running task to Virtual Thread worker, returning `202 Accepted` immediately:
+```bash
+curl -i -X POST http://localhost:8080/api/v1/tasks \
+  -H "Prefer: respond-async" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agentId": "01927e10-6fa2-7c88-990a-c184742e9432",
+    "contextId": "ctx-async-01",
+    "payload": {
+      "query": "Synthesize a 10-day meteorological precipitation forecast"
+    }
+  }'
+```
+Response (`202 Accepted`):
+```http
+HTTP/1.1 202 Accepted
+Location: /api/v1/tasks/01927e13-4cd2-7b22-a890-554433221100
+Preference-Applied: respond-async
+Content-Type: application/json
+
+{
+  "id": "01927e13-4cd2-7b22-a890-554433221100",
+  "agentId": "01927e10-6fa2-7c88-990a-c184742e9432",
+  "agentName": "WeatherAgent",
+  "contextId": "ctx-async-01",
+  "state": "SUBMITTED",
+  "request": { "query": "Synthesize a 10-day meteorological precipitation forecast" },
+  "response": null,
+  "errorDetail": null,
+  "createdAt": "2026-10-11T18:06:00Z",
+  "updatedAt": "2026-10-11T18:06:00Z"
+}
+```
+
+### 6. Keyset Cursor Pagination on Tasks (`GET /api/v1/tasks/agent/{agentId}`)
+High-speed seek pagination bypassing offset scans and TOAST storage:
+```bash
+curl -G "http://localhost:8080/api/v1/tasks/agent/01927e10-6fa2-7c88-990a-c184742e9432" \
+  --data-urlencode "cursorId=01927e13-4cd2-7b22-a890-554433221100" \
+  --data-urlencode "size=20"
+```
+
+---
+
+## Architectural Decisions & Trade-offs
+
+- **Java 21 Virtual Threads over Reactive Streams:** We use Project Loom (`spring.threads.virtual.enabled=true`) with synchronous `RestClient`. This provides sequential, debuggable call stacks and standard thread-local contexts while sustaining thousands of concurrent outbound HTTP probes without carrier-thread exhaustion or reactive library complexity.
+- **PostgreSQL JSONB + pgvector over Dedicated Vector Databases:** Storing the raw `AgentCard` in `JSONB` alongside 768-dimensional `vector` embeddings in PostgreSQL eliminates distributed transactions between relational and vector stores. Skill and tag updates remain ACID-compliant in a single transaction.
+- **Database Transaction Decoupling:** Outbound network calls (HTTP health checks and task delegations) execute outside database transactions. Connection pool leases are held strictly during database writes (<2ms), protecting the HikariCP pool from starvation during slow downstream network requests.
+
+---
 
 ## Known Limitations
 
-- **Authentication:** Token rotation for private downstream agents is currently static (`Bearer` or `API_KEY`). Mutual TLS (mTLS) handshake support is tracked for milestone v0.4.
-- **Event Streaming:** Task proxying currently buffers intermediate steps; full Server-Sent Events (SSE) streaming for long-running reasoning agents is implemented in Phase 4.
+- **Authentication Protocol:** Downstream agent authentication currently supports static API tokens (`Bearer` or `X-API-Key`). Mutual TLS (mTLS) certificate exchange is scheduled for milestone v0.2.0.
+- **Task Streaming:** Task responses are returned upon completion. Chunked token streaming via Server-Sent Events (SSE) for long-running reasoning agents is scheduled for milestone v0.5.0.
+- **Single-Node Health Coordinator:** Periodic health checks and FIFO table pruning run within a single Hub instance. Distributed scheduling across horizontal clusters via Redis distributed locking is tracked in milestone v0.5.0.
 
-## Contributing
+---
 
-Pull requests are welcome. Please check [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming conventions, commit formats, and test requirements before opening a PR.
+## Related Documentation
+
+- [Agent Developer & Interoperability Guide](AGENTS.md): Full technical specification for implementing compatible agents.
+- [Engineering Roadmap](ROADMAP.md): Release schedule and future architectural milestones.
+- [Changelog](CHANGELOG.md): Version history and detailed record of changes.
+- [Contributing Guidelines](CONTRIBUTING.md): Workflow, testing rules, and Conventional Commits format.
+
+---
 
 ## License
 
