@@ -7,11 +7,18 @@ import dev.a2ahub.events.AgentEventPublisher;
 import dev.a2ahub.security.SsrfValidator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.core.task.AsyncTaskExecutor;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Slice;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.net.URI;
 import java.time.ZonedDateTime;
@@ -19,6 +26,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * Non-transactional Orchestrator for task proxying and asynchronous delegation.
+ * Dispatches downstream calls without holding HikariCP connections.
+ * Supports dual synchronous and asynchronous execution modes on Java 21 Virtual Threads.
+ */
 @Service
 public class TaskService {
 
@@ -26,23 +38,40 @@ public class TaskService {
 
     private final TaskRepository taskRepository;
     private final AgentRepository agentRepository;
+    private final TaskPersistenceService persistenceService;
     private final SsrfValidator ssrfValidator;
     private final AgentEventPublisher eventPublisher;
     private final RestClient restClient;
+    private final AsyncTaskExecutor taskExecutor;
 
     public TaskService(TaskRepository taskRepository,
                        AgentRepository agentRepository,
+                       TaskPersistenceService persistenceService,
                        SsrfValidator ssrfValidator,
                        AgentEventPublisher eventPublisher,
-                       RestClient.Builder restClientBuilder) {
+                       RestClient.Builder restClientBuilder,
+                       @Qualifier("healthProbeTaskExecutor") AsyncTaskExecutor taskExecutor) {
         this.taskRepository = taskRepository;
         this.agentRepository = agentRepository;
+        this.persistenceService = persistenceService;
         this.ssrfValidator = ssrfValidator;
         this.eventPublisher = eventPublisher;
         this.restClient = restClientBuilder.build();
+        this.taskExecutor = taskExecutor;
     }
 
+    /**
+     * Backward-compatible overload defaulting async based on request payload property.
+     */
     public TaskDto submitTask(SubmitTaskRequest submitRequest) {
+        boolean asyncRequested = Boolean.TRUE.equals(submitRequest.async());
+        return submitTask(submitRequest, asyncRequested).task();
+    }
+
+    /**
+     * Dual dispatch: Submits task and executes synchronously or asynchronously via Virtual Threads.
+     */
+    public TaskExecutionResponse submitTask(SubmitTaskRequest submitRequest, boolean asyncRequested) {
         if (submitRequest.agentId() == null) {
             throw new IllegalArgumentException("Agent ID is required to submit a task");
         }
@@ -57,84 +86,113 @@ public class TaskService {
             throw new IllegalStateException("Target agent " + agent.getName() + " is currently OFFLINE");
         }
 
-        // Phase 1: Persist initial task in SUBMITTED state (short transaction)
-        TaskEntity task = createSubmittedTask(agent, submitRequest.contextId(), submitRequest.payload());
+        ssrfValidator.validateSafeRemoteUrl(agent.getUrl());
 
-        // Phase 2: Execute task proxying against downstream agent endpoint WITHOUT holding DB transaction
-        String endpoint = agent.getUrl().endsWith("/") ? agent.getUrl() + "tasks" : agent.getUrl() + "/tasks";
-        String finalState;
+        // Step 1: Persist initial task in a short transaction (< 2ms) via Spring proxy
+        TaskDto submittedTask = persistenceService.createSubmittedTask(
+                agent,
+                submitRequest.contextId(),
+                submitRequest.payload()
+        );
+
+        String correlationId = MDC.get("correlationId") != null ? MDC.get("correlationId") : UUID.randomUUID().toString();
+        String traceparent = MDC.get("traceparent") != null ? MDC.get("traceparent") : generateW3cTraceparent();
+
+        if (asyncRequested) {
+            String agentUrl = agent.getUrl();
+            String agentName = agent.getName();
+            log.info("Dispatching async task {} for agent {} to virtual thread executor", submittedTask.id(), agentName);
+            taskExecutor.execute(() -> {
+                try {
+                    log.info("Starting background proxy execution for task {}", submittedTask.id());
+                    executeDownstreamProxy(submittedTask.id(), submittedTask.contextId(), agentName, agentUrl, submitRequest.payload(), correlationId, traceparent);
+                    log.info("Completed background proxy execution for task {}", submittedTask.id());
+                } catch (Throwable t) {
+                    log.error("Fatal failure in background proxy execution for task {}: {}", submittedTask.id(), t.getMessage(), t);
+                }
+            });
+            return new TaskExecutionResponse(submittedTask, true);
+        } else {
+            // Synchronous execution on current Virtual Thread
+            TaskDto completedDto = executeDownstreamProxy(submittedTask.id(), submittedTask.contextId(), agent.getName(), agent.getUrl(), submitRequest.payload(), correlationId, traceparent);
+            return new TaskExecutionResponse(completedDto, false);
+        }
+    }
+
+    public TaskDto executeDownstreamProxy(UUID taskId, String contextId, String agentName, String agentUrl, Map<String, ?> payload, String correlationId, String traceparent) {
+        String endpoint = agentUrl.endsWith("/") ? agentUrl + "tasks" : agentUrl + "/tasks";
+        TaskState finalState;
         Map<String, Object> responseBody = null;
         String errorMessage = null;
 
         try {
-            ssrfValidator.validateSafeRemoteUrl(agent.getUrl());
-
             responseBody = restClient.post()
                     .uri(URI.create(endpoint))
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(submitRequest.payload())
+                    .header("X-Correlation-Id", correlationId)
+                    .header("X-Context-Id", contextId)
+                    .header("X-Task-Id", taskId.toString())
+                    .header("traceparent", traceparent)
+                    .body(payload)
                     .retrieve()
                     .body(new ParameterizedTypeReference<Map<String, Object>>() {});
 
-            finalState = "COMPLETED";
+            finalState = TaskState.COMPLETED;
             if (responseBody == null) {
                 responseBody = Map.of("status", "ok");
             }
+        } catch (ResourceAccessException e) {
+            log.warn("Downstream agent {} connection/read timeout for task {}: {}", agentName, taskId, e.getMessage());
+            finalState = TaskState.FAILED;
+            errorMessage = "Agent connection/read timeout: " + e.getMessage();
+        } catch (RestClientResponseException e) {
+            log.warn("Downstream agent {} returned HTTP {} for task {}: {}", agentName, e.getStatusCode(), taskId, e.getResponseBodyAsString());
+            finalState = TaskState.FAILED;
+            errorMessage = "Agent returned HTTP " + e.getStatusCode() + ": " + e.getResponseBodyAsString();
         } catch (Exception e) {
-            log.warn("Task execution failed for agent {}: {}", agent.getName(), e.getMessage());
-            finalState = "FAILED";
+            log.error("Unexpected failure proxying task {} to agent {}: {}", taskId, agentName, e.getMessage(), e);
+            finalState = TaskState.FAILED;
             errorMessage = e.getMessage();
         }
 
-        // Phase 3: Persist final task state and response in short transaction
-        TaskEntity updatedTask = updateTaskResult(task.getId(), finalState, responseBody, errorMessage);
-
-        TaskDto dto = toDto(updatedTask);
-        eventPublisher.publishTaskUpdated(dto);
-
-        return dto;
+        // Step 2: Persist final task state in a short transaction (< 2ms) via Spring proxy
+        TaskDto updatedDto = persistenceService.updateTaskResult(taskId, finalState, responseBody, errorMessage);
+        eventPublisher.publishTaskUpdated(updatedDto);
+        return updatedDto;
     }
 
-    @Transactional
-    public TaskEntity createSubmittedTask(Agent agent, String contextId, Map<String, Object> payload) {
-        TaskEntity task = new TaskEntity();
-        task.setAgent(agent);
-        task.setContextId(contextId != null ? contextId : UUID.randomUUID().toString());
-        task.setRequest(payload);
-        task.setState("SUBMITTED");
-        return taskRepository.save(task);
+    public Slice<TaskSummaryDto> findSummariesByAgentId(UUID agentId, UUID cursorId, int size) {
+        int pageSize = Math.min(Math.max(size, 1), 100);
+        return taskRepository.findSummariesByAgentId(agentId, cursorId, PageRequest.of(0, pageSize));
     }
 
-    @Transactional
-    public TaskEntity updateTaskResult(UUID taskId, String state, Map<String, Object> response, String errorDetail) {
-        TaskEntity task = taskRepository.findById(taskId)
-                .orElseThrow(() -> new IllegalStateException("Task not found with ID: " + taskId));
-        task.setState(state);
-        task.setResponse(response);
-        task.setErrorDetail(errorDetail);
-        task.setUpdatedAt(ZonedDateTime.now());
-        return taskRepository.save(task);
-    }
-
+    @Transactional(readOnly = true)
     public TaskDto findById(UUID id) {
         TaskEntity task = taskRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Task not found with ID: " + id));
         return toDto(task);
     }
 
+    @Transactional(readOnly = true)
     public List<TaskDto> findByAgentId(UUID agentId) {
         return taskRepository.findByAgentIdOrderByCreatedAtDesc(agentId).stream()
                 .map(this::toDto)
                 .toList();
     }
 
-    private TaskDto toDto(TaskEntity entity) {
+    private String generateW3cTraceparent() {
+        String traceId = UUID.randomUUID().toString().replace("-", "");
+        String spanId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+        return "00-" + traceId + "-" + spanId + "-01";
+    }
+
+    public TaskDto toDto(TaskEntity entity) {
         return new TaskDto(
                 entity.getId(),
                 entity.getAgent().getId(),
                 entity.getAgent().getName(),
                 entity.getContextId(),
-                entity.getState(),
+                entity.getState().name(),
                 entity.getRequest(),
                 entity.getResponse(),
                 entity.getErrorDetail(),
@@ -146,8 +204,16 @@ public class TaskService {
     public record SubmitTaskRequest(
             @jakarta.validation.constraints.NotNull(message = "Agent ID is required") UUID agentId,
             String contextId,
-            @jakarta.validation.constraints.NotEmpty(message = "Task payload cannot be empty") Map<String, Object> payload
-    ) {}
+            @jakarta.validation.constraints.NotEmpty(message = "Task payload cannot be empty") Map<String, ?> payload,
+            Boolean async
+    ) {
+        public SubmitTaskRequest(UUID agentId, String contextId, Map<String, ?> payload) {
+            this(agentId, contextId, payload, false);
+        }
+    }
+
+    public record TaskExecutionResponse(TaskDto task, boolean isAsync) {}
+
     public record TaskDto(
             UUID id,
             UUID agentId,
