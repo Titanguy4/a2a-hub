@@ -4,14 +4,13 @@ import dev.a2ahub.agent.Agent;
 import dev.a2ahub.agent.AgentCard;
 import dev.a2ahub.agent.AgentRepository;
 import dev.a2ahub.security.SsrfValidator;
-import dev.a2ahub.events.AgentEventPublisher;
-import dev.a2ahub.events.AgentStatusEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
 
 import java.net.URI;
@@ -21,34 +20,44 @@ import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
+/**
+ * Non-transactional Orchestrator for agent health checks.
+ * Dispatches concurrent network probes across Virtual Threads.
+ * Keeps HikariCP connections completely unleased during blocking HTTP I/O.
+ */
 @Service
 public class AgentHealthMonitor {
 
     private static final Logger log = LoggerFactory.getLogger(AgentHealthMonitor.class);
     private static final int PROBE_TIMEOUT_MS = 3000;
     private static final int DEGRADED_LATENCY_THRESHOLD_MS = 2000;
+    private static final int CYCLE_HARD_TIMEOUT_SECONDS = 15;
+    private static final int PRUNE_BATCH_SIZE = 5000;
 
     private final AgentRepository agentRepository;
     private final HealthCheckRepository healthCheckRepository;
-    private final AgentEventPublisher eventPublisher;
+    private final AgentHealthPersistenceService persistenceService;
     private final SsrfValidator ssrfValidator;
     private final RestClient probeClient;
     private final HealthProperties healthProperties;
+    private final AsyncTaskExecutor healthProbeTaskExecutor;
 
     public AgentHealthMonitor(AgentRepository agentRepository,
                               HealthCheckRepository healthCheckRepository,
-                              AgentEventPublisher eventPublisher,
+                              AgentHealthPersistenceService persistenceService,
                               SsrfValidator ssrfValidator,
                               RestClient.Builder restClientBuilder,
-                              HealthProperties healthProperties) {
+                              HealthProperties healthProperties,
+                              @Qualifier("healthProbeTaskExecutor") AsyncTaskExecutor healthProbeTaskExecutor) {
         this.agentRepository = agentRepository;
         this.healthCheckRepository = healthCheckRepository;
-        this.eventPublisher = eventPublisher;
+        this.persistenceService = persistenceService;
         this.ssrfValidator = ssrfValidator;
         this.healthProperties = healthProperties;
+        this.healthProbeTaskExecutor = healthProbeTaskExecutor;
 
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(PROBE_TIMEOUT_MS))
@@ -65,35 +74,74 @@ public class AgentHealthMonitor {
     /**
      * Periodic health probe cycle across all registered agents.
      * Uses Java 21 Virtual Threads for non-blocking concurrent I/O.
+     * ZERO database connections are held while HTTP requests are in flight.
      */
     @Scheduled(fixedDelayString = "#{@healthProperties.intervalMs}", initialDelay = 10000)
     public void runHealthChecks() {
-        List<Agent> agents = agentRepository.findAll();
-        if (agents.isEmpty()) {
+        List<AgentTarget> targets = agentRepository.findAll().stream()
+                .map(agent -> new AgentTarget(agent.getId(), agent.getName(), agent.getUrl()))
+                .toList();
+
+        if (targets.isEmpty()) {
             return;
         }
 
-        log.info("Starting concurrent health probe cycle for {} registered agents", agents.size());
+        log.info("Starting concurrent health probe cycle for {} registered agents", targets.size());
 
-        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            List<CompletableFuture<Void>> futures = agents.stream()
-                    .map(agent -> CompletableFuture.runAsync(() -> checkAgent(agent), executor))
-                    .toList();
+        List<CompletableFuture<HealthCheckResult>> futures = targets.stream()
+                .map(target -> CompletableFuture.supplyAsync(
+                        () -> executeProbe(target),
+                        healthProbeTaskExecutor
+                ))
+                .toList();
 
-            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        CompletableFuture<Void> allOf = CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]));
+
+        try {
+            allOf.get(CYCLE_HARD_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        } catch (TimeoutException te) {
+            log.warn("Health probe cycle reached hard timeout ceiling of {}s; collecting partial results", CYCLE_HARD_TIMEOUT_SECONDS);
+        } catch (Exception e) {
+            log.error("Unexpected error during health probe cycle aggregation: {}", e.getMessage(), e);
         }
 
-        log.info("Completed health probe cycle");
+        int recorded = 0;
+        for (CompletableFuture<HealthCheckResult> future : futures) {
+            if (future.isDone() && !future.isCompletedExceptionally()) {
+                try {
+                    HealthCheckResult result = future.join();
+                    persistenceService.recordProbeResult(
+                            result.agentId(),
+                            result.status(),
+                            result.latencyMs(),
+                            result.error()
+                    );
+                    recorded++;
+                } catch (Exception e) {
+                    log.warn("Failed to persist probe result: {}", e.getMessage());
+                }
+            }
+        }
+
+        log.info("Completed health probe cycle. Successfully recorded {}/{} agents", recorded, targets.size());
     }
 
     /**
-     * Executes health probe for a single agent.
+     * Executes health probe for a single agent (synchronous entry point).
      */
     public HealthCheckResult checkAgent(Agent agent) {
-        String originalStatus = agent.getStatus();
-        String probeUrl = agent.getUrl().endsWith("/")
-                ? agent.getUrl() + ".well-known/agent-card.json"
-                : agent.getUrl() + "/.well-known/agent-card.json";
+        HealthCheckResult result = executeProbe(new AgentTarget(agent.getId(), agent.getName(), agent.getUrl()));
+        persistenceService.recordProbeResult(agent.getId(), result.status(), result.latencyMs(), result.error());
+        return result;
+    }
+
+    /**
+     * Pure HTTP probe execution. Completely non-transactional and isolated.
+     */
+    public HealthCheckResult executeProbe(AgentTarget target) {
+        String probeUrl = target.url().endsWith("/")
+                ? target.url() + ".well-known/agent-card.json"
+                : target.url() + "/.well-known/agent-card.json";
 
         long startTime = System.currentTimeMillis();
         String status;
@@ -101,7 +149,7 @@ public class AgentHealthMonitor {
         int latencyMs;
 
         try {
-            ssrfValidator.validateSafeRemoteUrl(agent.getUrl());
+            ssrfValidator.validateSafeRemoteUrl(target.url());
 
             AgentCard card = probeClient.get()
                     .uri(URI.create(probeUrl))
@@ -120,54 +168,42 @@ public class AgentHealthMonitor {
             latencyMs = (int) (System.currentTimeMillis() - startTime);
             status = "OFFLINE";
             errorMessage = e.getMessage() != null ? e.getMessage() : "Connection failed";
-            log.debug("Health probe failed for agent {} ({}): {}", agent.getName(), agent.getId(), errorMessage);
+            log.debug("Health probe failed for agent {} ({}): {}", target.name(), target.id(), errorMessage);
         }
 
-        // Update agent record in DB
-        updateAgentStatus(agent.getId(), status, latencyMs, errorMessage, originalStatus);
-
-        return new HealthCheckResult(agent.getId(), status, latencyMs, errorMessage);
-    }
-
-    @Transactional
-    public void updateAgentStatus(UUID agentId, String status, int latencyMs, String errorMessage, String previousStatus) {
-        agentRepository.findById(agentId).ifPresent(agent -> {
-            agent.setStatus(status);
-            if ("HEALTHY".equals(status) || "DEGRADED".equals(status)) {
-                agent.setLastSeenAt(ZonedDateTime.now());
-            }
-            agentRepository.save(agent);
-
-            // Record health log
-            HealthCheckLog logRecord = new HealthCheckLog(agent, status, latencyMs, errorMessage);
-            healthCheckRepository.save(logRecord);
-
-            // Publish status event over WebSocket
-            AgentStatusEvent event = new AgentStatusEvent(
-                    agent.getId(),
-                    agent.getName(),
-                    status,
-                    previousStatus,
-                    latencyMs,
-                    ZonedDateTime.now(),
-                    errorMessage != null ? errorMessage : "Health probe succeeded"
-            );
-            eventPublisher.publishStatusEvent(event);
-        });
+        return new HealthCheckResult(target.id(), status, latencyMs, errorMessage);
     }
 
     /**
-     * Hourly pruning job to prevent unbounded growth of the health_checks table.
+     * Hourly chunked pruning job to prevent unbounded growth of the health_checks table.
+     * Uses keyset/batch deletion with LIMIT to avoid long-lived exclusive table locks and WAL spikes.
      */
     @Scheduled(cron = "0 0 * * * *")
-    @Transactional
     public void purgeOldHealthLogs() {
         ZonedDateTime cutoff = ZonedDateTime.now().minusHours(healthProperties.getRetentionHours());
-        int deleted = healthCheckRepository.deleteOlderThan(cutoff);
-        if (deleted > 0) {
-            log.info("Purged {} health check logs older than {} hours", deleted, healthProperties.getRetentionHours());
+        int totalDeleted = 0;
+
+        while (true) {
+            int deleted = healthCheckRepository.deleteBatchOlderThan(cutoff, PRUNE_BATCH_SIZE);
+            totalDeleted += deleted;
+            if (deleted < PRUNE_BATCH_SIZE) {
+                break;
+            }
+            try {
+                // Yield CPU and allow replication/WAL checkpoints to breathe
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        if (totalDeleted > 0) {
+            log.info("Safely purged {} health check logs older than {} hours in chunked batches",
+                    totalDeleted, healthProperties.getRetentionHours());
         }
     }
 
+    public record AgentTarget(UUID id, String name, String url) {}
     public record HealthCheckResult(UUID agentId, String status, int latencyMs, String error) {}
 }

@@ -16,6 +16,19 @@ public interface HealthCheckRepository extends JpaRepository<HealthCheckLog, Lon
     List<HealthCheckLog> findRecentByAgentId(@Param("agentId") UUID agentId, Pageable pageable);
 
     @Modifying
+    @Query(value = """
+        WITH doomed AS (
+            SELECT id FROM health_checks
+            WHERE checked_at < :cutoff
+            ORDER BY checked_at ASC
+            LIMIT :batchSize
+        )
+        DELETE FROM health_checks
+        WHERE id IN (SELECT id FROM doomed)
+    """, nativeQuery = true)
+    int deleteBatchOlderThan(@Param("cutoff") ZonedDateTime cutoff, @Param("batchSize") int batchSize);
+
+    @Modifying
     @Query("DELETE FROM HealthCheckLog h WHERE h.checkedAt < :cutoff")
     int deleteOlderThan(@Param("cutoff") ZonedDateTime cutoff);
 

@@ -9,7 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.ZonedDateTime;
 import java.util.List;
-import java.util.Map;
+
 import java.util.UUID;
 
 @Service
@@ -48,7 +48,6 @@ public class AgentHealthService {
         );
     }
 
-    @Transactional
     public AgentHealthMonitor.HealthCheckResult triggerHealthCheck(UUID agentId) {
         Agent agent = agentRepository.findById(agentId)
                 .orElseThrow(() -> new AgentNotFoundException("Agent not found with ID: " + agentId));
