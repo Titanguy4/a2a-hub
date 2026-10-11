@@ -16,6 +16,9 @@ const aiTaskDescription = ref('');
 const isSuggesting = ref(false);
 const aiSuggestionReasoning = ref<string | null>(null);
 const aiSuggestionError = ref<string | null>(null);
+const aiSuggestionSource = ref<string | null>(null);
+const aiSuggestionFallback = ref(false);
+const aiConfidence = ref<number | null>(null);
 
 onMounted(async () => {
   isLoadingAgents.value = true;
@@ -58,16 +61,24 @@ const submitTask = async () => {
 };
 
 const suggestAgent = async () => {
-  if (!aiTaskDescription.value) return;
+  if (!aiTaskDescription.value || !aiTaskDescription.value.trim()) return;
   isSuggesting.value = true;
   aiSuggestionError.value = null;
   aiSuggestionReasoning.value = null;
+  aiSuggestionSource.value = null;
+  aiSuggestionFallback.value = false;
+  aiConfidence.value = null;
+
   try {
-    const res = await orchestrationApi.suggest({ taskDescription: aiTaskDescription.value });
+    const res = await orchestrationApi.suggest({ taskDescription: aiTaskDescription.value.trim() });
     selectedAgentId.value = res.data.agentId;
     aiSuggestionReasoning.value = res.data.reasoning;
+    aiSuggestionSource.value = res.data.source || 'LLM_REASONING';
+    aiSuggestionFallback.value = !!res.data.fallback;
+    aiConfidence.value = res.data.confidenceScore ?? null;
   } catch (err: any) {
-    aiSuggestionError.value = err.response?.data?.message || err.message || 'Failed to get AI suggestion';
+    const detail = err.response?.data?.detail || err.response?.data?.message || err.message;
+    aiSuggestionError.value = detail || 'Failed to get AI suggestion';
   } finally {
     isSuggesting.value = false;
   }
@@ -105,9 +116,18 @@ const suggestAgent = async () => {
               <span>{{ aiSuggestionError }}</span>
             </div>
 
-            <div v-if="aiSuggestionReasoning" class="p-4 bg-indigo-100 text-indigo-900 rounded-lg text-sm border border-indigo-200 shadow-inner">
-              <div class="font-medium mb-1">AI Reasoning:</div>
-              <p>{{ aiSuggestionReasoning }}</p>
+            <div v-if="aiSuggestionReasoning" class="p-4 rounded-lg text-sm border shadow-inner"
+                 :class="aiSuggestionFallback ? 'bg-amber-50 text-amber-900 border-amber-200' : 'bg-indigo-100 text-indigo-900 border-indigo-200'">
+              <div class="flex items-center justify-between gap-2 mb-1">
+                <span class="font-medium text-xs uppercase tracking-wider">
+                  {{ aiSuggestionFallback ? 'Fallback Reasoning' : 'AI Reasoning' }}
+                </span>
+                <span class="text-xs px-2 py-0.5 rounded-full font-semibold"
+                      :class="aiSuggestionFallback ? 'bg-amber-200 text-amber-800' : 'bg-indigo-200 text-indigo-800'">
+                  {{ aiSuggestionSource === 'VECTOR_FALLBACK' ? 'Vector Match (Fallback)' : 'Gemini AI' }}
+                </span>
+              </div>
+              <p class="text-xs leading-relaxed mt-1">{{ aiSuggestionReasoning }}</p>
             </div>
 
             <button 

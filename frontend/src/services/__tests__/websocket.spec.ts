@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { IMessage, IFrame } from '@stomp/stompjs';
-import { WebSocketService, wsService } from '../websocket';
+import { WebSocketService, wsService, type TaskUpdatedEvent } from '../websocket';
 import type { AgentStatusEvent } from '../api';
 
 let capturedClientOptions: any = null;
@@ -239,6 +239,95 @@ describe('WebSocketService', () => {
       expect(listenerB).toHaveBeenCalledTimes(1);
       expect(listenerB).toHaveBeenCalledWith(mockEventFixture);
     });
+
+    const mockTaskEventFixture: TaskUpdatedEvent = {
+      type: 'TASK_UPDATED',
+      taskId: 'task-test-789',
+      agentId: 'agent-weather-1',
+      state: 'COMPLETED',
+      timestamp: '2026-10-05T19:25:00Z',
+    };
+
+    it('subscribes to /topic/tasks and dispatches parsed events to all registered onTaskUpdate listeners upon onConnect', () => {
+      const listenerA = vi.fn();
+      const listenerB = vi.fn();
+
+      service.onTaskUpdate(listenerA);
+      service.onTaskUpdate(listenerB);
+
+      service.connect('ws://localhost:8080/ws');
+
+      capturedClientOptions.onConnect();
+      expect(clientInstances[0].subscribe).toHaveBeenCalledWith(
+        '/topic/tasks',
+        expect.any(Function)
+      );
+
+      const mockMessage: IMessage = {
+        body: JSON.stringify(mockTaskEventFixture),
+        headers: {},
+        ack: vi.fn(),
+        nack: vi.fn(),
+      } as any;
+
+      mockSubscribeCallbacks['/topic/tasks']!(mockMessage);
+
+      expect(listenerA).toHaveBeenCalledTimes(1);
+      expect(listenerA).toHaveBeenCalledWith(mockTaskEventFixture);
+      expect(listenerB).toHaveBeenCalledTimes(1);
+      expect(listenerB).toHaveBeenCalledWith(mockTaskEventFixture);
+    });
+
+    it('handles malformed JSON on /topic/tasks broker messages gracefully with error logging', () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const listener = vi.fn();
+
+      service.onTaskUpdate(listener);
+      service.connect('ws://localhost:8080/ws');
+      capturedClientOptions.onConnect();
+
+      const malformedMessage: IMessage = {
+        body: '<<<not json>>>',
+        headers: {},
+        ack: vi.fn(),
+        nack: vi.fn(),
+      } as any;
+
+      expect(() => mockSubscribeCallbacks['/topic/tasks']!(malformedMessage)).not.toThrow();
+      expect(listener).not.toHaveBeenCalled();
+      expect(consoleSpy).toHaveBeenCalledWith(
+        '[WebSocket] Failed to parse task updated event:',
+        expect.any(Error)
+      );
+
+      consoleSpy.mockRestore();
+    });
+
+    it('unsubscribes specific onTaskUpdate listener when calling returned disposal function', () => {
+      const listenerA = vi.fn();
+      const listenerB = vi.fn();
+
+      const unsubscribeA = service.onTaskUpdate(listenerA);
+      service.onTaskUpdate(listenerB);
+
+      service.connect('ws://localhost:8080/ws');
+      capturedClientOptions.onConnect();
+
+      unsubscribeA();
+
+      const mockMessage: IMessage = {
+        body: JSON.stringify(mockTaskEventFixture),
+        headers: {},
+        ack: vi.fn(),
+        nack: vi.fn(),
+      } as any;
+
+      mockSubscribeCallbacks['/topic/tasks']!(mockMessage);
+
+      expect(listenerA).not.toHaveBeenCalled();
+      expect(listenerB).toHaveBeenCalledTimes(1);
+      expect(listenerB).toHaveBeenCalledWith(mockTaskEventFixture);
+    });
   });
 
   describe('Disconnection and STOMP Broker Error Callbacks', () => {
@@ -298,6 +387,7 @@ describe('WebSocketService', () => {
       expect(typeof wsService.connect).toBe('function');
       expect(typeof wsService.disconnect).toBe('function');
       expect(typeof wsService.onStatusChange).toBe('function');
+      expect(typeof wsService.onTaskUpdate).toBe('function');
       expect(typeof wsService.onConnectionChange).toBe('function');
     });
   });

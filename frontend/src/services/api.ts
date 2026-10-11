@@ -149,6 +149,10 @@ export interface AiSuggestionResponse {
   agentId: string;
   agentName: string;
   reasoning: string;
+  source?: 'LLM_REASONING' | 'VECTOR_FALLBACK' | string;
+  fallback?: boolean;
+  confidenceScore?: number;
+  fallbackReason?: string | null;
 }
 
 export const orchestrationApi = {
