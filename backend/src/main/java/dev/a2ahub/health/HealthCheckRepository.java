@@ -15,7 +15,7 @@ public interface HealthCheckRepository extends JpaRepository<HealthCheckLog, Lon
     @Query("SELECT h FROM HealthCheckLog h WHERE h.agent.id = :agentId ORDER BY h.checkedAt DESC")
     List<HealthCheckLog> findRecentByAgentId(@Param("agentId") UUID agentId, Pageable pageable);
 
-    @Modifying
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = """
         WITH doomed AS (
             SELECT id FROM health_checks
@@ -28,9 +28,13 @@ public interface HealthCheckRepository extends JpaRepository<HealthCheckLog, Lon
     """, nativeQuery = true)
     int deleteBatchOlderThan(@Param("cutoff") ZonedDateTime cutoff, @Param("batchSize") int batchSize);
 
-    @Modifying
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("DELETE FROM HealthCheckLog h WHERE h.checkedAt < :cutoff")
     int deleteOlderThan(@Param("cutoff") ZonedDateTime cutoff);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("DELETE FROM HealthCheckLog h WHERE h.agent.id = :agentId")
+    void deleteByAgentId(@Param("agentId") UUID agentId);
 
     @Query("SELECT AVG(h.latencyMs) FROM HealthCheckLog h WHERE h.status = 'HEALTHY' AND h.checkedAt >= :since")
     Double calculateAverageHealthyLatency(@Param("since") ZonedDateTime since);

@@ -297,7 +297,7 @@ class AgentDatabaseIntegrationTest {
         assertThat(remaining.getFirst().getId()).isEqualTo(recentLog.getId());
 
         // Cleanup
-        healthCheckRepository.deleteAll(remaining);
+        healthCheckRepository.deleteByAgentId(savedAgent.getId());
         healthCheckRepository.flush();
         agentRepository.delete(savedAgent);
         agentRepository.flush();
