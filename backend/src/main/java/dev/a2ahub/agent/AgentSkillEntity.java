@@ -9,6 +9,8 @@ import org.hibernate.type.SqlTypes;
 import java.util.List;
 import java.util.UUID;
 
+import dev.a2ahub.common.UuidV7;
+
 @Entity
 @Table(name = "agent_skills")
 @Getter
@@ -16,8 +18,15 @@ import java.util.UUID;
 public class AgentSkillEntity {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(name = "id", updatable = false, nullable = false)
     private UUID id;
+
+    @PrePersist
+    public void prePersist() {
+        if (this.id == null) {
+            this.id = UuidV7.generate();
+        }
+    }
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "agent_id", nullable = false)

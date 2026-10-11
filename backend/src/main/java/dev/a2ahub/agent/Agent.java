@@ -9,6 +9,10 @@ import lombok.Setter;
 import java.time.ZonedDateTime;
 import java.util.UUID;
 
+import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.annotations.SourceType;
+import dev.a2ahub.common.UuidV7;
+
 @Entity
 @Table(name = "agents")
 @Getter
@@ -16,8 +20,19 @@ import java.util.UUID;
 public class Agent {
     
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(name = "id", updatable = false, nullable = false)
     private UUID id;
+
+    @Version
+    @Column(name = "lock_version", nullable = false)
+    private Long lockVersion = 0L;
+
+    @PrePersist
+    public void prePersist() {
+        if (this.id == null) {
+            this.id = UuidV7.generate();
+        }
+    }
 
     @Column(nullable = false)
     private String name;
@@ -51,4 +66,8 @@ public class Agent {
 
     @Column(name = "last_seen_at")
     private ZonedDateTime lastSeenAt;
+
+    @UpdateTimestamp(source = SourceType.DB)
+    @Column(name = "updated_at")
+    private ZonedDateTime updatedAt;
 }
