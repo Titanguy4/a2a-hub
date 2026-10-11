@@ -103,6 +103,20 @@ class GlobalExceptionHandlerTest {
         assertThat(problem.getDetail()).isEqualTo("An unexpected internal server error occurred.");
     }
 
+    @Test
+    @DisplayName("Should translate NoActiveAgentsException to 503 Service Unavailable ProblemDetail")
+    void shouldHandleNoActiveAgents() {
+        dev.a2ahub.orchestration.NoActiveAgentsException ex = 
+                new dev.a2ahub.orchestration.NoActiveAgentsException("No active agents found in registry");
+
+        ProblemDetail problem = exceptionHandler.handleNoActiveAgents(ex);
+
+        assertThat(problem.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE.value());
+        assertThat(problem.getTitle()).isEqualTo("Orchestration Service Unavailable");
+        assertThat(problem.getDetail()).isEqualTo("No active agents found in registry");
+        assertThat(problem.getType().toString()).isEqualTo("urn:problem-type:no-active-agents");
+    }
+
     @SuppressWarnings("unused")
     private void dummyMethod(String param) {}
 }

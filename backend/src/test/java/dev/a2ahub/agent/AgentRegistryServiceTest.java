@@ -53,6 +53,7 @@ class AgentRegistryServiceTest {
     private RestClient restClient;
 
     @Mock
+    @SuppressWarnings("rawtypes")
     private RestClient.RequestHeadersUriSpec requestHeadersUriSpec;
 
     @Mock
@@ -63,6 +64,7 @@ class AgentRegistryServiceTest {
     @BeforeEach
     void setUp() {
         when(restClientBuilder.build()).thenReturn(restClient);
+        org.springframework.context.ApplicationContext applicationContext = org.mockito.Mockito.mock(org.springframework.context.ApplicationContext.class);
         agentRegistryService = new AgentRegistryService(
                 agentRepository,
                 agentSkillRepository,
@@ -70,8 +72,10 @@ class AgentRegistryServiceTest {
                 ssrfValidator,
                 embeddingService,
                 eventPublisher,
-                restClientBuilder
+                restClientBuilder,
+                applicationContext
         );
+        lenient().when(applicationContext.getBean(AgentRegistryService.class)).thenReturn(agentRegistryService);
     }
 
     @Test

@@ -27,6 +27,7 @@ public class AgentRegistryService {
     private final EmbeddingService embeddingService;
     private final AgentEventPublisher eventPublisher;
     private final RestClient restClient;
+    private final org.springframework.context.ApplicationContext applicationContext;
 
     public AgentRegistryService(AgentRepository agentRepository,
                                 AgentSkillRepository agentSkillRepository,
@@ -34,7 +35,8 @@ public class AgentRegistryService {
                                 SsrfValidator ssrfValidator,
                                 EmbeddingService embeddingService,
                                 AgentEventPublisher eventPublisher,
-                                RestClient.Builder restClientBuilder) {
+                                RestClient.Builder restClientBuilder,
+                                org.springframework.context.ApplicationContext applicationContext) {
         this.agentRepository = agentRepository;
         this.agentSkillRepository = agentSkillRepository;
         this.taskRepository = taskRepository;
@@ -42,6 +44,7 @@ public class AgentRegistryService {
         this.embeddingService = embeddingService;
         this.eventPublisher = eventPublisher;
         this.restClient = restClientBuilder.build();
+        this.applicationContext = applicationContext;
     }
 
     public Agent register(String agentUrl) {
@@ -77,7 +80,8 @@ public class AgentRegistryService {
         String embeddingVector = embeddingService.generateAgentEmbedding(card);
 
         // Atomically persist agent, skills, and embedding in a short DB transaction
-        Agent savedAgent = persistRegisteredAgent(agentUrl, card, embeddingVector);
+        Agent savedAgent = applicationContext.getBean(AgentRegistryService.class)
+            .persistRegisteredAgent(agentUrl, card, embeddingVector);
 
         // Broadcast registration event via WebSocket after successful commit
         eventPublisher.publishAgentRegistered(savedAgent);

@@ -1,6 +1,7 @@
 package dev.a2ahub.api;
 
 import dev.a2ahub.agent.AgentNotFoundException;
+import dev.a2ahub.orchestration.NoActiveAgentsException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -29,6 +30,29 @@ public class GlobalExceptionHandler {
         );
         problem.setTitle("Not Found");
         problem.setType(URI.create("about:blank"));
+        return problem;
+    }
+
+    @ExceptionHandler(NoActiveAgentsException.class)
+    public ProblemDetail handleNoActiveAgents(NoActiveAgentsException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                ex.getMessage()
+        );
+        problem.setTitle("Orchestration Service Unavailable");
+        problem.setType(URI.create("urn:problem-type:no-active-agents"));
+        return problem;
+    }
+
+    @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
+    public ProblemDetail handleHttpMessageNotReadable(org.springframework.http.converter.HttpMessageNotReadableException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST,
+                "Malformed JSON request payload"
+        );
+        problem.setTitle("Bad Request");
+        problem.setProperty("error", "Bad Request");
+        problem.setProperty("message", "Malformed JSON request payload");
         return problem;
     }
 
