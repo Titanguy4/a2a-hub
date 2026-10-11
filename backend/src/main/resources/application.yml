@@ -15,14 +15,27 @@ spring:
     username: ${DB_USER:postgres}
     password: ${DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: A2AHubHikariPool
+      maximum-pool-size: 20
+      minimum-idle: 20
+      connection-timeout: 2500
+      max-lifetime: 1800000
+      idle-timeout: 600000
+      leak-detection-threshold: 2000
+      keepalive-time: 30000
 
   jpa:
+    open-in-view: false
     hibernate:
       ddl-auto: validate
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
+        jdbc:
+          batch_size: 50
+          order_inserts: true
 
   flyway:
     enabled: true
@@ -40,6 +53,8 @@ a2ahub:
   health:
     interval-ms: ${A2A_HUB_HEALTH_INTERVAL_MS:30000}
     retention-hours: ${A2A_HUB_HEALTH_RETENTION_HOURS:48}
+  bootstrap:
+    agents: ${A2A_HUB_BOOTSTRAP_AGENTS:}
 
 springdoc:
   api-docs:
