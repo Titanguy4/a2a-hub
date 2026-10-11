@@ -1,5 +1,13 @@
 server:
   port: 8082
 
+spring:
+  application:
+    name: calculator-agent
+  threads:
+    virtual:
+      enabled: true
+
 gemini:
-  api-key: ${GEMINI_API_KEY}
+  api-key: ${GEMINI_API_KEY:}
+  model: ${GEMINI_MODEL:gemini-2.0-flash}

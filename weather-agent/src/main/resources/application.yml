@@ -4,10 +4,13 @@ server:
 spring:
   application:
     name: weather-agent
+  threads:
+    virtual:
+      enabled: true
   ai:
     google:
       genai:
-        api-key: ${GEMINI_API_KEY}
+        api-key: ${GEMINI_API_KEY:mock-dev-key}
         chat:
           options:
-            model: gemini-3.8-flash
+            model: ${GEMINI_MODEL:gemini-2.0-flash}
