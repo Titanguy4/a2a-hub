@@ -21,11 +21,11 @@ public class TaskEntity {
 
     @Id
     @Column(name = "id", updatable = false, nullable = false)
-    private UUID id;
+    private UUID id = UuidV7.generate();
 
     @Version
     @Column(name = "lock_version", nullable = false)
-    private Long lockVersion = 0L;
+    private Long lockVersion;
 
     @PrePersist
     public void prePersist() {

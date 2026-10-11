@@ -86,7 +86,7 @@ class AgentDatabaseIntegrationTest {
         agent.setAuthType("NONE");
         agent.setAgentCard(card);
 
-        Agent savedAgent = agentRepository.save(agent);
+        Agent savedAgent = agentRepository.saveAndFlush(agent);
         assertThat(savedAgent.getId()).isNotNull();
 
         AgentSkillEntity skillEntity = new AgentSkillEntity();
@@ -96,7 +96,7 @@ class AgentDatabaseIntegrationTest {
         skillEntity.setDescription("Fetches live weather");
         skillEntity.setTags(List.of("weather", "meteo"));
 
-        agentSkillRepository.save(skillEntity);
+        agentSkillRepository.saveAndFlush(skillEntity);
 
         // Verify retrieval
         Optional<Agent> retrieved = agentRepository.findById(savedAgent.getId());
@@ -126,7 +126,9 @@ class AgentDatabaseIntegrationTest {
 
         // Cleanup
         agentSkillRepository.deleteByAgentId(savedAgent.getId());
+        agentSkillRepository.flush();
         agentRepository.deleteById(savedAgent.getId());
+        agentRepository.flush();
 
         assertThat(agentRepository.findById(savedAgent.getId())).isEmpty();
         assertThat(agentSkillRepository.findByAgentId(savedAgent.getId())).isEmpty();
@@ -140,11 +142,11 @@ class AgentDatabaseIntegrationTest {
         agent.setUrl("https://task.agent.io");
         agent.setStatus("HEALTHY");
         agent.setAgentCard(new AgentCard("TaskAgent", "desc", "https://task.agent.io", "1.0", List.of(), Map.of(), List.of()));
-        Agent savedAgent = agentRepository.save(agent);
+        Agent savedAgent = agentRepository.saveAndFlush(agent);
 
         // Persist HealthCheck
         HealthCheckLog check = new HealthCheckLog(savedAgent, "HEALTHY", 45, null);
-        HealthCheckLog savedCheck = healthCheckRepository.save(check);
+        HealthCheckLog savedCheck = healthCheckRepository.saveAndFlush(check);
         assertThat(savedCheck.getId()).isNotNull();
 
         List<HealthCheckLog> checks = healthCheckRepository.findRecentByAgentId(savedAgent.getId(), PageRequest.of(0, 10));
@@ -157,7 +159,7 @@ class AgentDatabaseIntegrationTest {
         task.setContextId("integration-ctx-1");
         task.setState(TaskState.WORKING);
         task.setRequest(Map.of("prompt", "analyze dataset"));
-        TaskEntity savedTask = taskRepository.save(task);
+        TaskEntity savedTask = taskRepository.saveAndFlush(task);
         assertThat(savedTask.getId()).isNotNull();
 
         List<TaskEntity> tasks = taskRepository.findByAgentIdOrderByCreatedAtDesc(savedAgent.getId());
@@ -166,8 +168,11 @@ class AgentDatabaseIntegrationTest {
 
         // Cleanup
         taskRepository.delete(savedTask);
+        taskRepository.flush();
         healthCheckRepository.delete(savedCheck);
+        healthCheckRepository.flush();
         agentRepository.delete(savedAgent);
+        agentRepository.flush();
     }
 
     @Test
