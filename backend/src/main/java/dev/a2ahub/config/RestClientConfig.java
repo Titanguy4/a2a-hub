@@ -12,6 +12,7 @@ import java.time.Duration;
 public class RestClientConfig {
 
     @Bean
+    @org.springframework.context.annotation.Scope("prototype")
     public RestClient.Builder restClientBuilder() {
         HttpClient httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(3))
@@ -19,7 +20,7 @@ public class RestClientConfig {
                 .build();
 
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(Duration.ofSeconds(5));
+        requestFactory.setReadTimeout(Duration.ofSeconds(60));
 
         return RestClient.builder()
                 .requestFactory(requestFactory);

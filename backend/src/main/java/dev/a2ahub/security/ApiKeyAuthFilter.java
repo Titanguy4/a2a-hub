@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
+import org.springframework.http.server.RequestPath;
+import org.springframework.web.util.ServletRequestPathUtils;
+
 @Component
 public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
@@ -46,7 +49,15 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             return;
         }
 
-        String path = request.getRequestURI();
+        // Canonicalize path using Spring MVC's engine to prevent //, /../, and matrix variable bypasses
+        RequestPath requestPath;
+        if (ServletRequestPathUtils.hasParsedRequestPath(request)) {
+            requestPath = ServletRequestPathUtils.getParsedRequestPath(request);
+        } else {
+            requestPath = ServletRequestPathUtils.parseAndCache(request);
+        }
+        String rawPath = requestPath.pathWithinApplication().value();
+        String path = "/" + rawPath.replaceAll("^/+", "");
         String method = request.getMethod();
 
         // Check if route requires auth
