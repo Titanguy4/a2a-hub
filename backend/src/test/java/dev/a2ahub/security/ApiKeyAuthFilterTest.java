@@ -182,4 +182,18 @@ class ApiKeyAuthFilterTest {
         verify(filterChain, never()).doFilter(request, response);
         assertThat(response.getStatus()).isEqualTo(401);
     }
+
+    @Test
+    @DisplayName("Should block unauthenticated mutating request attempting path traversal or multi-slash evasion")
+    void shouldBlockPathTraversalEvasion() throws ServletException, IOException {
+        securityProperties.setApiKey("secret-token-123");
+
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "//api/v1/agents");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilterInternal(request, response, filterChain);
+
+        verify(filterChain, never()).doFilter(request, response);
+        assertThat(response.getStatus()).isEqualTo(401);
+    }
 }

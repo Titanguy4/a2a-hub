@@ -16,6 +16,40 @@ services:
       timeout: 5s
       retries: 5
 
+  weather-agent:
+    build:
+      context: ./weather-agent
+      dockerfile: Dockerfile
+    container_name: a2a-weather-agent
+    ports:
+      - "8081:8081"
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8081/.well-known/agent-card.json"]
+      interval: 15s
+      timeout: 5s
+      start_period: 25s
+      retries: 3
+
+  calculator-agent:
+    build:
+      context: ./calculator-agent
+      dockerfile: Dockerfile
+    container_name: a2a-calculator-agent
+    ports:
+      - "8082:8082"
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8082/.well-known/agent-card.json"]
+      interval: 15s
+      timeout: 5s
+      start_period: 25s
+      retries: 3
+
   backend:
     build: 
       context: ./backend
@@ -24,11 +58,12 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: a2ahub
-      DB_USER: postgres
-      DB_PASSWORD: postgres
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/a2ahub
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      A2AHUB_SECURITY_SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+      A2A_HUB_BOOTSTRAP_AGENTS: "http://weather-agent:8081,http://calculator-agent:8082"
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,6 +87,10 @@ services:
       - no-new-privileges:true
     depends_on:
       backend:
+        condition: service_healthy
+      weather-agent:
+        condition: service_healthy
+      calculator-agent:
         condition: service_healthy
 
 volumes:

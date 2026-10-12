@@ -16,7 +16,12 @@ import java.time.ZonedDateTime;
 public class HealthCheckLog {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "health_checks_seq_gen")
+    @SequenceGenerator(
+        name = "health_checks_seq_gen",
+        sequenceName = "health_checks_seq",
+        allocationSize = 50
+    )
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -24,7 +29,7 @@ public class HealthCheckLog {
     private Agent agent;
 
     @Column(name = "checked_at", nullable = false)
-    private ZonedDateTime checkedAt = ZonedDateTime.now();
+    private ZonedDateTime checkedAt;
 
     @Column(nullable = false, length = 20)
     private String status;
@@ -34,6 +39,13 @@ public class HealthCheckLog {
 
     @Column(name = "error_msg")
     private String errorMsg;
+
+    @PrePersist
+    public void prePersist() {
+        if (this.checkedAt == null) {
+            this.checkedAt = ZonedDateTime.now();
+        }
+    }
 
     public HealthCheckLog(Agent agent, String status, Integer latencyMs, String errorMsg) {
         this.agent = agent;

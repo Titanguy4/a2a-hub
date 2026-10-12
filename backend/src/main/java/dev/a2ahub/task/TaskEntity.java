@@ -11,6 +11,8 @@ import java.time.ZonedDateTime;
 import java.util.Map;
 import java.util.UUID;
 
+import dev.a2ahub.common.UuidV7;
+
 @Entity
 @Table(name = "tasks")
 @Getter
@@ -18,8 +20,19 @@ import java.util.UUID;
 public class TaskEntity {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
+    @Column(name = "id", updatable = false, nullable = false)
+    private UUID id = UuidV7.generate();
+
+    @Version
+    @Column(name = "lock_version", nullable = false)
+    private Long lockVersion;
+
+    @PrePersist
+    public void prePersist() {
+        if (this.id == null) {
+            this.id = UuidV7.generate();
+        }
+    }
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "agent_id", nullable = false)
@@ -28,8 +41,9 @@ public class TaskEntity {
     @Column(name = "context_id")
     private String contextId;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private String state = "SUBMITTED";
+    private TaskState state = TaskState.SUBMITTED;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false)

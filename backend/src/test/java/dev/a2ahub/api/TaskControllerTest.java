@@ -2,14 +2,21 @@ package dev.a2ahub.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.a2ahub.agent.AgentNotFoundException;
+import dev.a2ahub.config.WebConfig;
 import dev.a2ahub.security.ApiKeyAuthFilter;
 import dev.a2ahub.security.SecurityProperties;
 import dev.a2ahub.task.TaskService;
+import dev.a2ahub.task.TaskState;
+import dev.a2ahub.task.TaskSummaryDto;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Slice;
+import org.springframework.data.domain.SliceImpl;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -20,16 +27,19 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(TaskController.class)
-@Import({SecurityProperties.class, ApiKeyAuthFilter.class})
-@DisplayName("TaskController Web Slice Tests")
+@Import({WebConfig.class, ApiKeyAuthFilter.class, SecurityProperties.class})
+@DisplayName("TaskController Unit Tests")
 class TaskControllerTest {
 
     @Autowired
@@ -42,8 +52,8 @@ class TaskControllerTest {
     private TaskService taskService;
 
     @Test
-    @DisplayName("POST /api/v1/tasks - Should submit task successfully")
-    void shouldSubmitTask() throws Exception {
+    @DisplayName("POST /api/v1/tasks - Should submit task synchronously by default")
+    void shouldSubmitTaskSynchronously() throws Exception {
         UUID agentId = UUID.randomUUID();
         UUID taskId = UUID.randomUUID();
         TaskService.SubmitTaskRequest request = new TaskService.SubmitTaskRequest(
@@ -65,7 +75,8 @@ class TaskControllerTest {
                 ZonedDateTime.now()
         );
 
-        when(taskService.submitTask(any(TaskService.SubmitTaskRequest.class))).thenReturn(taskDto);
+        when(taskService.submitTask(any(TaskService.SubmitTaskRequest.class), eq(false)))
+                .thenReturn(new TaskService.TaskExecutionResponse(taskDto, false));
 
         mockMvc.perform(post("/api/v1/tasks")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -76,7 +87,47 @@ class TaskControllerTest {
                 .andExpect(jsonPath("$.state").value("COMPLETED"))
                 .andExpect(jsonPath("$.contextId").value("ctx-123"));
 
-        verify(taskService).submitTask(any(TaskService.SubmitTaskRequest.class));
+        verify(taskService).submitTask(any(TaskService.SubmitTaskRequest.class), eq(false));
+    }
+
+    @Test
+    @DisplayName("POST /api/v1/tasks - Should return 202 Accepted when Prefer: respond-async is provided")
+    void shouldReturn202WhenPreferAsyncProvided() throws Exception {
+        UUID agentId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        TaskService.SubmitTaskRequest request = new TaskService.SubmitTaskRequest(
+                agentId,
+                "ctx-async-1",
+                Map.of("prompt", "deep thinking")
+        );
+
+        TaskService.TaskDto submittedDto = new TaskService.TaskDto(
+                taskId,
+                agentId,
+                "EchoAgent",
+                "ctx-async-1",
+                "SUBMITTED",
+                Map.of("prompt", "deep thinking"),
+                null,
+                null,
+                ZonedDateTime.now(),
+                ZonedDateTime.now()
+        );
+
+        when(taskService.submitTask(any(TaskService.SubmitTaskRequest.class), eq(true)))
+                .thenReturn(new TaskService.TaskExecutionResponse(submittedDto, true));
+
+        mockMvc.perform(post("/api/v1/tasks")
+                        .header("Prefer", "respond-async")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isAccepted())
+                .andExpect(header().string("Preference-Applied", "respond-async"))
+                .andExpect(header().string(HttpHeaders.LOCATION, "/api/v1/tasks/" + taskId))
+                .andExpect(jsonPath("$.id").value(taskId.toString()))
+                .andExpect(jsonPath("$.state").value("SUBMITTED"));
+
+        verify(taskService).submitTask(any(TaskService.SubmitTaskRequest.class), eq(true));
     }
 
     @Test
@@ -89,7 +140,7 @@ class TaskControllerTest {
                 Map.of("message", "hello agent")
         );
 
-        when(taskService.submitTask(any(TaskService.SubmitTaskRequest.class)))
+        when(taskService.submitTask(any(TaskService.SubmitTaskRequest.class), anyBoolean()))
                 .thenThrow(new AgentNotFoundException("Agent not found with ID: " + agentId));
 
         mockMvc.perform(post("/api/v1/tasks")
@@ -158,5 +209,40 @@ class TaskControllerTest {
                 .andExpect(jsonPath("$[0].state").value("WORKING"));
 
         verify(taskService).findByAgentId(agentId);
+    }
+
+    @Test
+    @DisplayName("GET /api/v1/tasks/agent/{agentId}?cursorId=...&size=... - Should return keyset paginated slice of task summaries")
+    void shouldGetTasksForAgentWithKeysetPagination() throws Exception {
+        UUID agentId = UUID.randomUUID();
+        UUID cursorId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+
+        TaskSummaryDto summary = new TaskSummaryDto(
+                taskId,
+                agentId,
+                "EchoAgent",
+                "ctx-keyset-1",
+                TaskState.COMPLETED,
+                null,
+                ZonedDateTime.now(),
+                ZonedDateTime.now()
+        );
+
+        Slice<TaskSummaryDto> slice = new SliceImpl<>(List.of(summary), PageRequest.of(0, 10), false);
+
+        when(taskService.findSummariesByAgentId(agentId, cursorId, 10)).thenReturn(slice);
+
+        mockMvc.perform(get("/api/v1/tasks/agent/{agentId}", agentId)
+                        .param("cursorId", cursorId.toString())
+                        .param("size", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].id").value(taskId.toString()))
+                .andExpect(jsonPath("$.content[0].agentName").value("EchoAgent"))
+                .andExpect(jsonPath("$.content[0].state").value("COMPLETED"))
+                .andExpect(jsonPath("$.content[0].contextId").value("ctx-keyset-1"))
+                .andExpect(jsonPath("$.numberOfElements").value(1));
+
+        verify(taskService).findSummariesByAgentId(agentId, cursorId, 10);
     }
 }

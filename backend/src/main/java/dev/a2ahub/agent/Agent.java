@@ -9,6 +9,10 @@ import lombok.Setter;
 import java.time.ZonedDateTime;
 import java.util.UUID;
 
+import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.annotations.SourceType;
+import dev.a2ahub.common.UuidV7;
+
 @Entity
 @Table(name = "agents")
 @Getter
@@ -16,8 +20,19 @@ import java.util.UUID;
 public class Agent {
     
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
+    @Column(name = "id", updatable = false, nullable = false)
+    private UUID id = UuidV7.generate();
+
+    @Version
+    @Column(name = "lock_version", nullable = false)
+    private Long lockVersion;
+
+    @PrePersist
+    public void prePersist() {
+        if (this.id == null) {
+            this.id = UuidV7.generate();
+        }
+    }
 
     @Column(nullable = false)
     private String name;
@@ -40,7 +55,6 @@ public class Agent {
 
     @Convert(converter = dev.a2ahub.security.AesGcmAttributeConverter.class)
     @Column(name = "auth_token_enc")
-    @com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.WRITE_ONLY)
     private String authTokenEnc;
 
     @JdbcTypeCode(SqlTypes.JSON)
@@ -52,4 +66,8 @@ public class Agent {
 
     @Column(name = "last_seen_at")
     private ZonedDateTime lastSeenAt;
+
+    @UpdateTimestamp(source = SourceType.DB)
+    @Column(name = "updated_at")
+    private ZonedDateTime updatedAt;
 }

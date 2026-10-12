@@ -24,6 +24,8 @@ export interface AgentCard {
   supportedInterfaces: string[];
 }
 
+export type AgentStatus = 'HEALTHY' | 'DEGRADED' | 'OFFLINE' | 'UNKNOWN';
+
 export interface Agent {
   id: string;
   name: string;
@@ -31,9 +33,9 @@ export interface Agent {
   url: string;
   version: string;
   providerName: string | null;
-  status: 'HEALTHY' | 'DEGRADED' | 'OFFLINE' | 'UNKNOWN';
+  status: AgentStatus;
   authType: string;
-  agentCard: AgentCard;
+  agentCard?: AgentCard | null;
   registeredAt: string;
   lastSeenAt: string | null;
   latencyMs?: number;
@@ -95,6 +97,13 @@ export interface AgentStatusEvent {
   message: string;
 }
 
+export const agentsApi = {
+  getAll: (page = 0, size = 50) => api.get<Agent[]>('/agents', { params: { page, size } }),
+  getById: (id: string) => api.get<Agent>(`/agents/${id}`),
+  register: (url: string) => api.post<Agent>('/agents', { url }),
+  unregister: (id: string) => api.delete(`/agents/${id}`)
+};
+
 export const discoveryApi = {
   discover: (params: DiscoverParams) => api.get<Agent[]>('/discover', { params }),
   getSkills: () => api.get<SkillSummary[]>('/skills'),
@@ -105,4 +114,47 @@ export const healthApi = {
   getAgentHealth: (agentId: string, limit = 30) => api.get<AgentHealthResponse>(`/agents/${agentId}/health`, { params: { limit } }),
   triggerCheck: (agentId: string) => api.post<{ agentId: string; status: string; latencyMs: number; error: string | null }>(`/agents/${agentId}/health/check`),
   getStats: () => api.get<HubHealthStats>('/health/stats')
+};
+
+export interface TaskDto {
+  id: string;
+  agentId: string;
+  agentName: string;
+  contextId: string;
+  state: string;
+  request: any;
+  response: any;
+  errorDetail: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SubmitTaskRequest {
+  agentId: string;
+  contextId?: string;
+  payload: Record<string, any>;
+}
+
+export const tasksApi = {
+  submitTask: (req: SubmitTaskRequest) => api.post<TaskDto>('/tasks', req),
+  getTask: (id: string) => api.get<TaskDto>(`/tasks/${id}`),
+  getTasksByAgent: (agentId: string) => api.get<TaskDto[]>(`/tasks/agent/${agentId}`)
+};
+
+export interface AiSuggestionRequest {
+  taskDescription: string;
+}
+
+export interface AiSuggestionResponse {
+  agentId: string;
+  agentName: string;
+  reasoning: string;
+  source?: 'LLM_REASONING' | 'VECTOR_FALLBACK' | string;
+  fallback?: boolean;
+  confidenceScore?: number;
+  fallbackReason?: string | null;
+}
+
+export const orchestrationApi = {
+  suggest: (req: AiSuggestionRequest) => api.post<AiSuggestionResponse>('/orchestration/suggest', req)
 };

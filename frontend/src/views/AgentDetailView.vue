@@ -84,8 +84,25 @@ const statusBadge = computed(() => {
   }
 });
 
-onMounted(() => {
-  fetchHealthHistory();
+onMounted(async () => {
+  await fetchHealthHistory();
+  if (!agent.value) {
+    await store.fetchAgentById(agentId);
+  }
+});
+
+defineExpose({
+  healthData,
+  loading,
+  probing,
+  error,
+  agent,
+  avgLatency,
+  maxLatency,
+  uptimePercent,
+  statusBadge,
+  fetchHealthHistory,
+  triggerProbe,
 });
 </script>
 

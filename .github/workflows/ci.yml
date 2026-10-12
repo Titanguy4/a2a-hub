@@ -12,11 +12,10 @@ concurrency:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   # --------------------------------------------------------------------------
-  # Gate 1: Security Audit & Secret Detection
+  # Gate 1: Security Audit & Secret Detection (Fail-Fast Gate)
   # --------------------------------------------------------------------------
   security-audit:
     name: Security & Secret Scan
@@ -34,10 +33,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # --------------------------------------------------------------------------
-  # Gate 2: Backend Unit, Slice & Testcontainers Integration Tests (Java 21)
+  # Gate 2: Backend Registry Tests & Testcontainers (Java 21 · Spring Boot 3.4)
   # --------------------------------------------------------------------------
   backend-test:
-    name: Backend Test (Java 21 · Spring Boot 3.4)
+    name: Backend Test (Java 21 · Testcontainers · JaCoCo)
+    needs: [security-audit]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -51,15 +51,56 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
+      # Pre-pull pgvector to prevent on-demand Testcontainers download timeouts & rate-limits
+      - name: Pre-pull Testcontainers Vector Database Image
+        run: docker pull pgvector/pgvector:pg16
+
       - name: Compile and Run Unit, Slice & Architecture Tests
         working-directory: ./backend
+        run: |
+          if [ -f mvnw ]; then chmod +x mvnw && ./mvnw clean test -B; else mvn clean test -B; fi
+
+      - name: Upload JaCoCo Coverage Report
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        if: always()
+        with:
+          name: backend-jacoco-coverage
+          path: backend/target/site/jacoco
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------------
+  # Gate 3: Agent Microservices Tests (weather-agent & calculator-agent)
+  # --------------------------------------------------------------------------
+  agents-test:
+    name: Agent Test (${{ matrix.service }})
+    needs: [security-audit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [weather-agent, calculator-agent]
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@6a0805fcefea3d4657a47ac4c165951e33482018 # v4.2.2
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Test ${{ matrix.service }} Suite
+        working-directory: ./${{ matrix.service }}
         run: mvn clean test -B
 
   # --------------------------------------------------------------------------
-  # Gate 3: Frontend Unit Tests, Typecheck & Production Build (Vue 3 + Vite)
+  # Gate 4: Frontend Unit Tests, Typecheck & Production Build (Vue 3 + Vite)
   # --------------------------------------------------------------------------
   frontend-test:
     name: Frontend Test & Build (Vue 3 · Vitest · TypeScript)
+    needs: [security-audit]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -77,23 +118,37 @@ jobs:
         working-directory: ./frontend
         run: npm ci
 
-      - name: Run Frontend Vitest Test Suite
+      - name: Run Frontend Vitest Test Suite with Coverage
         working-directory: ./frontend
-        run: npm test
+        run: npm run test:coverage
+
+      - name: Upload Vitest Coverage Report
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        if: always()
+        with:
+          name: frontend-vitest-coverage
+          path: frontend/coverage
+          if-no-files-found: ignore
 
       - name: Typecheck and Build Bundle
         working-directory: ./frontend
         run: npm run build
 
   # --------------------------------------------------------------------------
-  # Gate 4: Container Build & Vulnerability Scan (Trivy)
+  # Gate 5: Matrix Docker Build & Vulnerability Scan (Trivy for All Services)
   # --------------------------------------------------------------------------
   docker-scan:
-    name: Docker Build & Vulnerability Scan
-    needs: [backend-test, frontend-test]
+    name: Container Scan (${{ matrix.service }})
+    needs: [backend-test, agents-test, frontend-test]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [backend, weather-agent, calculator-agent]
     steps:
       - name: Checkout Source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -101,22 +156,22 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.7.1
 
-      - name: Build Docker Image with GHA Caching
+      - name: Build Service Container Image with Scoped GHA Cache
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
-          context: ./backend
-          file: ./backend/Dockerfile
+          context: ./${{ matrix.service }}
+          file: ./${{ matrix.service }}/Dockerfile
           load: true
-          tags: a2a-hub-backend:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: a2a-${{ matrix.service }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
       - name: Run Container Vulnerability Scan with Trivy
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
-          image-ref: a2a-hub-backend:${{ github.sha }}
+          image-ref: a2a-${{ matrix.service }}:${{ github.sha }}
           format: 'sarif'
-          output: 'trivy-results.sarif'
+          output: 'trivy-${{ matrix.service }}.sarif'
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
           trivyignores: '.trivyignore'
@@ -125,4 +180,5 @@ jobs:
         uses: github/codeql-action/upload-sarif@87ef0dc97def48aa960fbf026a2563ee9dbdb470 # v3
         if: always()
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: 'trivy-${{ matrix.service }}.sarif'
+          category: 'trivy-${{ matrix.service }}'

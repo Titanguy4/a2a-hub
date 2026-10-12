@@ -128,11 +128,20 @@ public class SsrfValidator {
             // 172.16.0.0/12 (RFC 1918 Private)
             if (b0 == 172 && (b1 >= 16 && b1 <= 31)) return true;
 
+            // 192.0.0.0/24 (IETF Protocol Assignments) & 192.0.2.0/24 (TEST-NET-1 RFC 5737)
+            if (b0 == 192 && b1 == 0 && (raw[2] & 0xFF) <= 2) return true;
+
             // 192.168.0.0/16 (RFC 1918 Private)
             if (b0 == 192 && b1 == 168) return true;
 
-            // 198.18.0.0/15 (Benchmarking)
+            // 198.18.0.0/15 (Benchmarking RFC 2544)
             if (b0 == 198 && (b1 == 18 || b1 == 19)) return true;
+
+            // 198.51.100.0/24 (TEST-NET-2 RFC 5737)
+            if (b0 == 198 && b1 == 51 && (raw[2] & 0xFF) == 100) return true;
+
+            // 203.0.113.0/24 (TEST-NET-3 RFC 5737)
+            if (b0 == 203 && b1 == 0 && (raw[2] & 0xFF) == 113) return true;
 
             // 224.0.0.0/4 (Multicast) & 240.0.0.0/4 (Reserved)
             if (b0 >= 224) return true;

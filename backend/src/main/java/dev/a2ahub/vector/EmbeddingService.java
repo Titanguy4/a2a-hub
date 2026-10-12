@@ -11,8 +11,9 @@ import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.Arrays;
-import java.util.List;
+
 
 @Service
 public class EmbeddingService {
@@ -22,12 +23,21 @@ public class EmbeddingService {
 
     private final EmbeddingModel geminiEmbeddingModel;
 
-    public EmbeddingService(@Value("${a2ahub.gemini.api-key:${GEMINI_API_KEY:}}") String geminiApiKey) {
+    public EmbeddingService(String geminiApiKey) {
+        this(geminiApiKey, "text-embedding-004");
+    }
+
+    public EmbeddingService(
+            @Value("${a2ahub.gemini.api-key:${GEMINI_API_KEY:}}") String geminiApiKey,
+            @Value("${a2ahub.gemini.embedding-model:${GEMINI_EMBEDDING_MODEL:text-embedding-004}}") String embeddingModelName) {
         if (geminiApiKey != null && !geminiApiKey.isBlank()) {
-            log.info("Initializing LangChain4j Google AI Gemini Embedding Model");
+            log.info("Initializing LangChain4j Google AI Gemini Embedding Model ({})", embeddingModelName);
             this.geminiEmbeddingModel = GoogleAiEmbeddingModel.builder()
                     .apiKey(geminiApiKey.trim())
-                    .modelName("text-embedding-004")
+                    .modelName(embeddingModelName)
+                    .outputDimensionality(768)
+                    .timeout(Duration.ofSeconds(10))
+                    .maxRetries(3)
                     .build();
         } else {
             log.info("No Gemini API key provided. Using deterministic fallback vector generator for local/air-gapped mode.");

@@ -19,7 +19,7 @@ public class ArchitectureFitnessTest {
     @ArchTest
     static final ArchRule controllersShouldOnlyBeAccessedFromWebLayer = classes()
             .that().resideInAPackage("..api..")
-            .should().onlyBeAccessed().byClassesThat().resideInAnyPackage("..api..", "dev.a2ahub..");
+            .should().onlyBeAccessed().byClassesThat().resideInAnyPackage("..api..", "dev.a2ahub");
 
     @ArchTest
     static final ArchRule securityShouldNotDependOnControllers = noClasses()
@@ -30,4 +30,9 @@ public class ArchitectureFitnessTest {
     static final ArchRule repositoriesShouldBeInterfaces = classes()
             .that().haveSimpleNameEndingWith("Repository")
             .should().beInterfaces();
+
+    @ArchTest
+    static final ArchRule controllersShouldNotDependOnRepositories = noClasses()
+            .that().resideInAPackage("..api..")
+            .should().dependOnClassesThat().haveSimpleNameEndingWith("Repository");
 }

@@ -1,0 +1,16 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: weather-agent
+  threads:
+    virtual:
+      enabled: true
+  ai:
+    google:
+      genai:
+        api-key: ${GEMINI_API_KEY:mock-dev-key}
+        chat:
+          options:
+            model: ${GEMINI_MODEL:gemini-2.0-flash}

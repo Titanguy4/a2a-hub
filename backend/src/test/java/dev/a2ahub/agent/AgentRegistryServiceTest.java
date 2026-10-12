@@ -35,6 +35,9 @@ class AgentRegistryServiceTest {
     private AgentSkillRepository agentSkillRepository;
 
     @Mock
+    private dev.a2ahub.task.TaskRepository taskRepository;
+
+    @Mock
     private SsrfValidator ssrfValidator;
 
     @Mock
@@ -50,6 +53,7 @@ class AgentRegistryServiceTest {
     private RestClient restClient;
 
     @Mock
+    @SuppressWarnings("rawtypes")
     private RestClient.RequestHeadersUriSpec requestHeadersUriSpec;
 
     @Mock
@@ -60,14 +64,18 @@ class AgentRegistryServiceTest {
     @BeforeEach
     void setUp() {
         when(restClientBuilder.build()).thenReturn(restClient);
+        org.springframework.context.ApplicationContext applicationContext = org.mockito.Mockito.mock(org.springframework.context.ApplicationContext.class);
         agentRegistryService = new AgentRegistryService(
                 agentRepository,
                 agentSkillRepository,
+                taskRepository,
                 ssrfValidator,
                 embeddingService,
                 eventPublisher,
-                restClientBuilder
+                restClientBuilder,
+                applicationContext
         );
+        lenient().when(applicationContext.getBean(AgentRegistryService.class)).thenReturn(agentRegistryService);
     }
 
     @Test
@@ -166,15 +174,17 @@ class AgentRegistryServiceTest {
     }
 
     @Test
-    @DisplayName("Should unregister agent by ID, cleanup skills, and broadcast event")
+    @DisplayName("Should unregister agent by ID, cleanup skills, tasks, and broadcast event")
     void shouldUnregisterAgent() {
         UUID id = UUID.randomUUID();
         doNothing().when(agentSkillRepository).deleteByAgentId(id);
+        doNothing().when(taskRepository).deleteByAgentId(id);
         doNothing().when(agentRepository).deleteById(id);
 
         agentRegistryService.unregister(id);
 
         verify(agentSkillRepository).deleteByAgentId(id);
+        verify(taskRepository).deleteByAgentId(id);
         verify(agentRepository).deleteById(id);
         verify(eventPublisher).publishAgentStatusChanged(id, "UNREGISTERED");
     }

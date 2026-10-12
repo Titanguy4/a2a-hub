@@ -12,6 +12,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.core.task.SimpleAsyncTaskExecutor;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
 
@@ -23,6 +24,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -34,6 +36,9 @@ class TaskServiceTest {
 
     @Mock
     private AgentRepository agentRepository;
+
+    @Mock
+    private TaskPersistenceService persistenceService;
 
     @Mock
     private SsrfValidator ssrfValidator;
@@ -61,7 +66,15 @@ class TaskServiceTest {
     @BeforeEach
     void setUp() {
         when(restClientBuilder.build()).thenReturn(restClient);
-        taskService = new TaskService(taskRepository, agentRepository, ssrfValidator, eventPublisher, restClientBuilder);
+        taskService = new TaskService(
+                taskRepository,
+                agentRepository,
+                persistenceService,
+                ssrfValidator,
+                eventPublisher,
+                restClientBuilder,
+                new SimpleAsyncTaskExecutor()
+        );
     }
 
     @Test
@@ -75,7 +88,7 @@ class TaskServiceTest {
 
         when(agentRepository.findById(agentId)).thenReturn(Optional.of(agent));
 
-        TaskService.SubmitTaskRequest request = new TaskService.SubmitTaskRequest(agentId, "ctx-1", Map.of("query", "test"));
+        TaskService.SubmitTaskRequest request = new TaskService.SubmitTaskRequest(agentId, "ctx-1", Map.of("query", "test"), false);
 
         assertThatThrownBy(() -> taskService.submitTask(request))
                 .isInstanceOf(IllegalStateException.class)
@@ -91,19 +104,21 @@ class TaskServiceTest {
         TaskService.SubmitTaskRequest request = new TaskService.SubmitTaskRequest(
                 agentId,
                 "ctx-missing-agent",
-                Map.of("query", "test")
+                Map.of("query", "test"),
+                false
         );
 
         assertThatThrownBy(() -> taskService.submitTask(request))
                 .isInstanceOf(AgentNotFoundException.class)
                 .hasMessage("Agent not found with ID: " + agentId);
 
-        verify(taskRepository, never()).save(any());
+        verify(persistenceService, never()).createSubmittedTask(any(), any(), any());
     }
 
     @Test
-    @DisplayName("Should successfully execute and complete task proxying")
-    void shouldExecuteAndCompleteTask() {
+    @DisplayName("Should successfully execute synchronous task proxying")
+    @SuppressWarnings("unchecked")
+    void shouldExecuteAndCompleteSynchronousTask() {
         UUID agentId = UUID.randomUUID();
         Agent agent = new Agent();
         agent.setId(agentId);
@@ -113,41 +128,89 @@ class TaskServiceTest {
 
         when(agentRepository.findById(agentId)).thenReturn(Optional.of(agent));
 
-        TaskEntity initialTask = new TaskEntity();
-        initialTask.setId(UUID.randomUUID());
-        initialTask.setAgent(agent);
-        initialTask.setState("SUBMITTED");
-        initialTask.setRequest(Map.of("input", "hello"));
+        UUID initialTaskId = UUID.randomUUID();
+        TaskService.TaskDto initialDto = new TaskService.TaskDto(
+                initialTaskId,
+                agentId,
+                agent.getName(),
+                "ctx-100",
+                TaskState.SUBMITTED.name(),
+                Map.of("input", "hello"),
+                null,
+                null,
+                java.time.ZonedDateTime.now(),
+                java.time.ZonedDateTime.now()
+        );
 
-        when(taskRepository.save(any(TaskEntity.class))).thenAnswer(i -> {
-            TaskEntity t = i.getArgument(0);
-            if (t.getId() == null) t.setId(UUID.randomUUID());
-            return t;
-        });
+        when(persistenceService.createSubmittedTask(eq(agent), eq("ctx-100"), any())).thenReturn(initialDto);
 
-        when(taskRepository.findById(any(UUID.class))).thenAnswer(i -> {
-            UUID id = i.getArgument(0);
-            TaskEntity t = new TaskEntity();
-            t.setId(id);
-            t.setAgent(agent);
-            t.setState("SUBMITTED");
-            t.setRequest(Map.of("input", "hello"));
-            return Optional.of(t);
-        });
+        TaskService.TaskDto completedDto = new TaskService.TaskDto(
+                initialTaskId,
+                agentId,
+                agent.getName(),
+                "ctx-100",
+                TaskState.COMPLETED.name(),
+                Map.of("input", "hello"),
+                Map.of("output", "world"),
+                null,
+                java.time.ZonedDateTime.now(),
+                java.time.ZonedDateTime.now()
+        );
+
+        when(persistenceService.updateTaskResult(eq(initialTaskId), eq(TaskState.COMPLETED), any(), isNull()))
+                .thenReturn(completedDto);
 
         when(restClient.post()).thenReturn(requestBodyUriSpec);
         when(requestBodyUriSpec.uri(any(URI.class))).thenReturn(requestBodySpec);
         when(requestBodySpec.contentType(MediaType.APPLICATION_JSON)).thenReturn(requestBodySpec);
+        when(requestBodySpec.header(anyString(), anyString())).thenReturn(requestBodySpec);
         when(requestBodySpec.body(any(Object.class))).thenReturn(requestBodySpec);
         when(requestBodySpec.retrieve()).thenReturn(responseSpec);
         when(responseSpec.body(any(ParameterizedTypeReference.class))).thenReturn(Map.of("output", "world"));
 
-        TaskService.SubmitTaskRequest request = new TaskService.SubmitTaskRequest(agentId, "ctx-100", Map.of("input", "hello"));
-        TaskService.TaskDto result = taskService.submitTask(request);
+        TaskService.SubmitTaskRequest request = new TaskService.SubmitTaskRequest(agentId, "ctx-100", Map.of("input", "hello"), false);
+        TaskService.TaskExecutionResponse result = taskService.submitTask(request, false);
 
-        assertThat(result).isNotNull();
-        assertThat(result.state()).isEqualTo("COMPLETED");
-        assertThat(result.response()).containsEntry("output", "world");
+        assertThat(result.isAsync()).isFalse();
+        assertThat(result.task()).isNotNull();
+        assertThat(result.task().state()).isEqualTo("COMPLETED");
+        assertThat(result.task().response()).containsEntry("output", "world");
         verify(eventPublisher).publishTaskUpdated(any(TaskService.TaskDto.class));
+    }
+
+    @Test
+    @DisplayName("Should immediately return SUBMITTED task when async mode requested")
+    void shouldReturnSubmittedImmediatelyInAsyncMode() {
+        UUID agentId = UUID.randomUUID();
+        Agent agent = new Agent();
+        agent.setId(agentId);
+        agent.setName("AsyncAgent");
+        agent.setUrl("https://async.agent.io");
+        agent.setStatus("HEALTHY");
+
+        when(agentRepository.findById(agentId)).thenReturn(Optional.of(agent));
+
+        UUID initialTaskId = UUID.randomUUID();
+        TaskService.TaskDto initialDto = new TaskService.TaskDto(
+                initialTaskId,
+                agentId,
+                agent.getName(),
+                "ctx-async",
+                TaskState.SUBMITTED.name(),
+                Map.of("prompt", "deep thinking"),
+                null,
+                null,
+                java.time.ZonedDateTime.now(),
+                java.time.ZonedDateTime.now()
+        );
+
+        when(persistenceService.createSubmittedTask(eq(agent), any(), any())).thenReturn(initialDto);
+
+        TaskService.SubmitTaskRequest request = new TaskService.SubmitTaskRequest(agentId, "ctx-async", Map.of("prompt", "deep thinking"), true);
+        TaskService.TaskExecutionResponse result = taskService.submitTask(request, true);
+
+        assertThat(result.isAsync()).isTrue();
+        assertThat(result.task().state()).isEqualTo("SUBMITTED");
+        verify(persistenceService).createSubmittedTask(eq(agent), eq("ctx-async"), any());
     }
 }

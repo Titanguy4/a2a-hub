@@ -1,8 +1,14 @@
 package dev.a2ahub.agent;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Standard A2A v1.0 Agent Card representation.
+ * Supports structured AgentInterface objects, resilient null defaults,
+ * and backwards-compatible string array deserialization.
+ */
 public record AgentCard(
     String name,
     String description,
@@ -10,7 +16,38 @@ public record AgentCard(
     String version,
     List<Skill> skills,
     Map<String, Object> capabilities,
-    List<String> supportedInterfaces
+    List<Object> supportedInterfaces
 ) {
+    public AgentCard {
+        skills = skills != null ? skills : List.of();
+        capabilities = capabilities != null ? capabilities : Map.of();
+        supportedInterfaces = supportedInterfaces != null ? supportedInterfaces : List.of();
+    }
+
     public record Skill(String id, String name, String description, List<String> tags) {}
+
+    public record AgentInterface(String url, String protocolBinding, String protocolVersion) {}
+
+    /**
+     * Normalized access to interfaces as type-safe AgentInterface records.
+     */
+    public List<AgentInterface> interfaces() {
+        if (supportedInterfaces == null) {
+            return List.of();
+        }
+        List<AgentInterface> result = new ArrayList<>();
+        for (Object item : supportedInterfaces) {
+            if (item instanceof AgentInterface ai) {
+                result.add(ai);
+            } else if (item instanceof String s) {
+                result.add(new AgentInterface(null, s, "1.0"));
+            } else if (item instanceof Map<?, ?> m) {
+                String u = m.get("url") != null ? m.get("url").toString() : null;
+                String b = m.get("protocolBinding") != null ? m.get("protocolBinding").toString() : "HTTP+JSON";
+                String v = m.get("protocolVersion") != null ? m.get("protocolVersion").toString() : "1.0";
+                result.add(new AgentInterface(u, b, v));
+            }
+        }
+        return result;
+    }
 }
