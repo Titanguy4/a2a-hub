@@ -13,9 +13,7 @@ class WebSocketService {
       return;
     }
 
-    const defaultUrl = (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + 
-                       (import.meta.env.VITE_WS_HOST || 'localhost:8080') + '/ws';
-    const targetUrl = brokerUrl || import.meta.env.VITE_WS_URL || defaultUrl;
+    const targetUrl = this.resolveBrokerUrl(brokerUrl);
 
     this.client = new Client({
       brokerURL: targetUrl,
@@ -59,6 +57,23 @@ class WebSocketService {
       this.client.deactivate();
       this.isConnected = false;
     }
+  }
+
+  private resolveBrokerUrl(brokerUrl?: string): string {
+    const configuredUrl: string | undefined = import.meta.env.VITE_WS_URL;
+    return brokerUrl || (configuredUrl && this.toAbsoluteWsUrl(configuredUrl)) || this.defaultBrokerUrl();
+  }
+
+  private toAbsoluteWsUrl(url: string): string {
+    return url.startsWith('/') ? this.wsScheme() + window.location.host + url : url;
+  }
+
+  private defaultBrokerUrl(): string {
+    return this.wsScheme() + (import.meta.env.VITE_WS_HOST || 'localhost:8080') + '/ws';
+  }
+
+  private wsScheme(): string {
+    return window.location.protocol === 'https:' ? 'wss://' : 'ws://';
   }
 }
 

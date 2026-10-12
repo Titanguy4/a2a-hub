@@ -40,6 +40,17 @@ a2ahub:
   health-monitor:
     interval-ms: ${A2A_HUB_HEALTH_INTERVAL_MS:60000}
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+
 springdoc:
   api-docs:
     enabled: ${A2A_HUB_ENABLE_API_DOCS:true}
@@ -50,4 +61,3 @@ logging:
   level:
     root: INFO
     dev.a2ahub: DEBUG
-
