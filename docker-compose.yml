@@ -67,6 +67,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      weather-agent:
+        condition: service_healthy
+      calculator-agent:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health/readiness > /dev/null || exit 1"]
       interval: 10s
@@ -88,10 +92,12 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-      weather-agent:
-        condition: service_healthy
-      calculator-agent:
-        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ > /dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
 volumes:
   postgres_data:
